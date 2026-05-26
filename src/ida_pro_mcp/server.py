@@ -10,10 +10,12 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:
     from ida_pro_mcp.ida_mcp.zeromcp import McpServer
     from ida_pro_mcp.ida_mcp.zeromcp.jsonrpc import JsonRpcRequest, JsonRpcResponse
+    from ida_pro_mcp.ida_mcp import connection
 else:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "ida_mcp"))
     from zeromcp import McpServer
     from zeromcp.jsonrpc import JsonRpcRequest, JsonRpcResponse
+    import connection
 
     sys.path.pop(0)
 
@@ -47,14 +49,28 @@ def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse |
     elif isinstance(payload, str):
         payload = payload.encode("utf-8")
 
+    # Prefer the live port/token from the connection file written by the
+    # running plugin. Falls back to the configured port and no auth header when
+    # the file is absent (preserving the original behavior).
+    target_port = IDA_PORT
+    headers = {"Content-Type": "application/json"}
+    conn_info = connection.read_connection_file()
+    if conn_info:
+        file_port = conn_info.get("port")
+        if isinstance(file_port, int):
+            target_port = file_port
+        token = conn_info.get("token")
+        if isinstance(token, str) and token:
+            headers["Authorization"] = f"Bearer {token}"
+
     try:
-        conn = http.client.HTTPConnection(IDA_HOST, IDA_PORT, timeout=30)
+        conn = http.client.HTTPConnection(IDA_HOST, target_port, timeout=30)
         try:
             conn.request(
                 "POST",
                 "/mcp",
                 payload,
-                {"Content-Type": "application/json"},
+                headers,
             )
             response = conn.getresponse()
             raw_data = response.read().decode()
