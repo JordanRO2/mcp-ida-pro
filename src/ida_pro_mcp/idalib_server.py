@@ -11,7 +11,7 @@ import idapro
 import ida_loader
 
 from ida_pro_mcp.ida_mcp import MCP_SERVER
-from ida_pro_mcp.ida_mcp.api_core import server_health, server_warmup
+from ida_pro_mcp.ida_mcp.interface.tools.core_tools import server_health, server_warmup
 from ida_pro_mcp.ida_mcp.rpc import get_current_transport_session_id, tool
 from ida_pro_mcp.idalib_session_manager import get_session_manager
 

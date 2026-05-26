@@ -25,20 +25,20 @@ from . import container
 from .infrastructure.sync import sync as sync
 from . import utils
 
-# Import all API modules to register @tool functions and @resource functions
-from . import api_core
-from . import api_analysis
-from . import api_memory
-from . import api_types
-from . import api_modify
-from . import api_stack
-from . import api_debug
-from . import api_python
-from . import api_resources
-from . import api_survey
-from . import api_composite
-from . import api_security
-from . import api_sigmaker
+# Import all interface modules to register @tool / @resource functions
+from .interface.tools import core_tools as core_tools
+from .interface.tools import analysis_tools as analysis_tools
+from .interface.tools import composite_tools as composite_tools
+from .interface.tools import survey_tools as survey_tools
+from .interface.tools import memory_tools as memory_tools
+from .interface.tools import types_tools as types_tools
+from .interface.tools import modify_tools as modify_tools
+from .interface.tools import stack_tools as stack_tools
+from .interface.tools import debug_tools as debug_tools
+from .interface.tools import python_exec_tools as python_exec_tools
+from .interface.tools import security_tools as security_tools
+from .interface.tools import sigmaker_tools as sigmaker_tools
+from .interface.resources import resources_resources as resources_resources
 from .infrastructure import trace as trace
 
 # Re-export key components for external use
@@ -50,7 +50,7 @@ from .infrastructure.sync.sync import (
 )
 from .rpc import MCP_SERVER, MCP_UNSAFE, tool, unsafe, resource, ext
 from .infrastructure.http.handler import IdaMcpHttpRequestHandler
-from .api_core import init_caches
+from .infrastructure.cache import init_caches
 
 # Tracing is always on: every tools/call is recorded into the IDB netnode.
 trace.configure_idb()
@@ -87,20 +87,20 @@ __all__ = [
     "container",
     "sync",
     "utils",
-    # API modules
-    "api_core",
-    "api_analysis",
-    "api_memory",
-    "api_types",
-    "api_modify",
-    "api_stack",
-    "api_debug",
-    "api_python",
-    "api_resources",
-    "api_survey",
-    "api_composite",
-    "api_security",
-    "api_sigmaker",
+    # Interface modules (tools/resources)
+    "core_tools",
+    "analysis_tools",
+    "composite_tools",
+    "survey_tools",
+    "memory_tools",
+    "types_tools",
+    "modify_tools",
+    "stack_tools",
+    "debug_tools",
+    "python_exec_tools",
+    "security_tools",
+    "sigmaker_tools",
+    "resources_resources",
     "trace",
     # Re-exported components
     "idasync",
