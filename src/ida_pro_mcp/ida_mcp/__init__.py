@@ -21,7 +21,8 @@ if hasattr(signal, "SIGPIPE"):
 
 # Import infrastructure modules
 from . import rpc
-from . import sync
+from . import container
+from .infrastructure.sync import sync as sync
 from . import utils
 
 # Import all API modules to register @tool functions and @resource functions
@@ -38,12 +39,17 @@ from . import api_survey
 from . import api_composite
 from . import api_security
 from . import api_sigmaker
-from . import trace as trace
+from .infrastructure import trace as trace
 
 # Re-export key components for external use
-from .sync import idasync, IDAError, IDASyncError, CancelledError
-from .rpc import MCP_SERVER, MCP_UNSAFE, tool, unsafe, resource
-from .http import IdaMcpHttpRequestHandler
+from .infrastructure.sync.sync import (
+    idasync,
+    IDAError,
+    IDASyncError,
+    CancelledError,
+)
+from .rpc import MCP_SERVER, MCP_UNSAFE, tool, unsafe, resource, ext
+from .infrastructure.http.handler import IdaMcpHttpRequestHandler
 from .api_core import init_caches
 
 # Tracing is always on: every tools/call is recorded into the IDB netnode.
@@ -58,7 +64,7 @@ import os as _os
 _profile_path = _os.environ.get("IDA_MCP_PROFILE")
 if _profile_path:
     import logging as _logging
-    from .profile import load_profile as _load_profile
+    from .application.profile import load_profile as _load_profile
 
     try:
         _whitelist = _load_profile(_profile_path)
@@ -78,6 +84,7 @@ if _profile_path:
 __all__ = [
     # Infrastructure modules
     "rpc",
+    "container",
     "sync",
     "utils",
     # API modules
@@ -105,6 +112,7 @@ __all__ = [
     "tool",
     "unsafe",
     "resource",
+    "ext",
     "IdaMcpHttpRequestHandler",
     "init_caches",
 ]
