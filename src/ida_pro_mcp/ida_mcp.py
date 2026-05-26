@@ -90,12 +90,25 @@ class MCPConfigHandler(idaapi.action_handler_t):
 
 
 class MCPUIHooks(ida_kernwin.UI_Hooks):
-    """Defers menu attachment until the UI is fully ready."""
+    """Defers menu attachment until the UI is fully ready, then auto-starts the server."""
+
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
 
     def ready_to_run(self):
         ida_kernwin.attach_action_to_menu(
             "Edit/Plugins/", CONFIG_ACTION_ID, idaapi.SETMENU_APP
         )
+        # Auto-start the MCP server once the UI is ready, so the user does not
+        # have to press Ctrl+Alt+M manually. Opt out with IDA_MCP_NO_AUTOSTART.
+        import os as _os
+
+        if not _os.environ.get("IDA_MCP_NO_AUTOSTART"):
+            try:
+                self.plugin._start_server()
+            except Exception as e:
+                print(f"[MCP] Auto-start failed: {e}")
         self.unhook()
 
 
@@ -115,7 +128,8 @@ class MCP(idaapi.plugin_t):
             hotkey = hotkey.replace("Alt", "Option")
 
         print(
-            f"[MCP] Plugin loaded, use Edit -> Plugins -> MCP ({hotkey}) to start the server"
+            f"[MCP] Plugin loaded, server auto-starts when the UI is ready "
+            f"(press {hotkey} to restart, or set IDA_MCP_NO_AUTOSTART to disable)"
         )
         self.mcp: "ida_mcp.rpc.McpServer | None" = None
         self.host = self.DEFAULT_HOST
@@ -129,13 +143,14 @@ class MCP(idaapi.plugin_t):
                 MCPConfigHandler(self),
             )
         )
-        # Defer menu attachment until the UI is fully initialized
-        self._ui_hooks = MCPUIHooks()
+        # Defer menu attachment + auto-start until the UI is fully initialized
+        self._ui_hooks = MCPUIHooks(self)
         self._ui_hooks.hook()
 
         return idaapi.PLUGIN_KEEP
 
-    def run(self, arg):
+    def _start_server(self):
+        """(Re)start the MCP HTTP server. Used by both auto-start and the hotkey."""
         if self.mcp:
             self.mcp.stop()
             self.mcp = None
@@ -168,6 +183,10 @@ class MCP(idaapi.plugin_t):
                 else:
                     raise
         print(f"[MCP] Error: No available port in range {self.port}-{max_port - 1}")
+
+    def run(self, arg):
+        # Manual (re)start via Ctrl+Alt+M / Edit -> Plugins -> MCP.
+        self._start_server()
 
     def term(self):
         if hasattr(self, "_ui_hooks"):
