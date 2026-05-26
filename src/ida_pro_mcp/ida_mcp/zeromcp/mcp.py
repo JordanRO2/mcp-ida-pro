@@ -386,6 +386,11 @@ class McpServer:
         self._enabled_extensions = threading.local()  # set[str] per request
         self._extensions_registry = extensions if extensions is not None else {}  # group -> set of tool names
         self.require_streamable_http_session = False
+        # Tool profile (whitelist). None = no profile, every tool exposed.
+        # When set, only whitelisted tools (plus _profile_protected infrastructure
+        # tools) are visible in tools/list and callable via tools/call.
+        self._tool_whitelist: set[str] | None = None
+        self._profile_protected: set[str] = set()
 
         # Register MCP protocol methods with correct names
         self.registry = JsonRpcRegistry()
@@ -583,6 +588,8 @@ class McpServer:
             tool_group = self._get_tool_extension(func_name)
             if tool_group and tool_group not in enabled:
                 continue  # Skip tools from disabled extension groups
+            if not self._tool_allowed_by_profile(func_name):
+                continue  # Skip tools not in the active profile whitelist
             tools.append(self._generate_tool_schema(func_name, func))
         return {"tools": tools}
 
@@ -593,6 +600,22 @@ class McpServer:
                 return group
         return None
 
+    def set_tool_profile(self, whitelist, protected=()) -> None:
+        """Restrict exposed tools to a whitelist (plus protected infrastructure tools).
+
+        Pass whitelist=None to clear the profile and expose every tool again.
+        Mirrors the Thunderbird MCP access-control model: filtered tools are
+        hidden from tools/list and blocked at dispatch, never silently run.
+        """
+        self._tool_whitelist = None if whitelist is None else set(whitelist)
+        self._profile_protected = set(protected)
+
+    def _tool_allowed_by_profile(self, func_name: str) -> bool:
+        """True if no profile is active, or the tool is whitelisted/protected."""
+        if self._tool_whitelist is None:
+            return True
+        return func_name in self._tool_whitelist or func_name in self._profile_protected
+
     def _mcp_tools_call(self, name: str, arguments: dict | None = None, _meta: dict | None = None) -> dict:
         """MCP tools/call method"""
         # Check if tool requires an extension that isn't enabled
@@ -601,6 +624,13 @@ class McpServer:
         if tool_group and tool_group not in enabled:
             return {
                 "content": [{"type": "text", "text": f"Tool '{name}' requires extension '{tool_group}'. Enable with ?ext={tool_group}"}],
+                "isError": True,
+            }
+
+        # Block tools excluded by the active profile whitelist
+        if not self._tool_allowed_by_profile(name):
+            return {
+                "content": [{"type": "text", "text": f"Tool '{name}' is disabled by the active tool profile (IDA_MCP_PROFILE)."}],
                 "isError": True,
             }
 

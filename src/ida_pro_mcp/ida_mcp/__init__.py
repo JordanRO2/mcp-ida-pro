@@ -37,12 +37,43 @@ from . import api_resources
 from . import api_survey
 from . import api_composite
 from . import api_security
+from . import api_sigmaker
+from . import trace as trace
 
 # Re-export key components for external use
 from .sync import idasync, IDAError, IDASyncError, CancelledError
 from .rpc import MCP_SERVER, MCP_UNSAFE, tool, unsafe, resource
 from .http import IdaMcpHttpRequestHandler
 from .api_core import init_caches
+
+# Tracing is always on: every tools/call is recorded into the IDB netnode.
+trace.configure_idb()
+
+# Optional tool profile (whitelist) via the IDA_MCP_PROFILE environment variable.
+# Points at a profile file (e.g. profiles/readonly.txt). When set, only the
+# whitelisted tools — plus the protected infrastructure tools below — are
+# exposed in tools/list and callable. Configured by the user, never via MCP.
+import os as _os
+
+_profile_path = _os.environ.get("IDA_MCP_PROFILE")
+if _profile_path:
+    import logging as _logging
+    from .profile import load_profile as _load_profile
+
+    try:
+        _whitelist = _load_profile(_profile_path)
+        MCP_SERVER.set_tool_profile(
+            _whitelist, protected={"server_health", "server_warmup"}
+        )
+        _logging.getLogger(__name__).info(
+            "IDA_MCP_PROFILE applied: %d whitelisted tool(s) from %s",
+            len(_whitelist),
+            _profile_path,
+        )
+    except Exception as _exc:
+        _logging.getLogger(__name__).warning(
+            "Failed to load IDA_MCP_PROFILE '%s': %s", _profile_path, _exc
+        )
 
 __all__ = [
     # Infrastructure modules
@@ -62,6 +93,8 @@ __all__ = [
     "api_survey",
     "api_composite",
     "api_security",
+    "api_sigmaker",
+    "trace",
     # Re-exported components
     "idasync",
     "IDAError",
