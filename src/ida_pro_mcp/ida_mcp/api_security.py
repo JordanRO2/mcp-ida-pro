@@ -397,7 +397,9 @@ def find_crypto(
                 if ida_ua.decode_insn(insn, head) == 0:
                     continue
 
-                for op_idx in range(ida_ua.UA_MAXOP):
+                # UA_MAXOP was dropped from the ida_ua module in IDA 9.0;
+                # fall back to the historical operand count (8).
+                for op_idx in range(getattr(ida_ua, "UA_MAXOP", 8)):
                     op = insn.ops[op_idx]
                     if op.type == ida_ua.o_void:
                         break
