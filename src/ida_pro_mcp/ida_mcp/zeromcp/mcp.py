@@ -1,3 +1,4 @@
+import os
 import re
 import select
 import socket
@@ -21,6 +22,67 @@ from .jsonrpc import JsonRpcRegistry, JsonRpcError, JsonRpcException, get_curren
 class McpToolError(Exception):
     def __init__(self, message: str):
         super().__init__(message)
+
+class _ToolRateLimiter:
+    """Per-tool token-bucket rate limiter.
+
+    Configured from the IDA_MCP_RATE_LIMIT environment variable. The value is a
+    rate in calls-per-second and applies independently to each tool name. Two
+    formats are accepted:
+
+        IDA_MCP_RATE_LIMIT=5        -> 5 calls/sec per tool
+        IDA_MCP_RATE_LIMIT=5/sec    -> identical (the "/sec" suffix is optional)
+
+    The bucket allows short bursts up to the configured rate (capacity == rate,
+    minimum 1 token) and refills continuously at `rate` tokens per second.
+
+    DEFAULT: when the env var is unset, empty, or unparseable, the limiter is
+    disabled and `allow()` always returns True so behavior is unchanged.
+    """
+
+    def __init__(self, env_value: str | None = None):
+        if env_value is None:
+            env_value = os.environ.get("IDA_MCP_RATE_LIMIT", "")
+        self.rate = self._parse_rate(env_value)
+        self.capacity = max(1.0, self.rate) if self.rate > 0 else 0.0
+        self._lock = threading.Lock()
+        # tool name -> (tokens, last_refill_monotonic)
+        self._buckets: dict[str, tuple[float, float]] = {}
+
+    @staticmethod
+    def _parse_rate(value: str) -> float:
+        value = (value or "").strip().lower()
+        if not value:
+            return 0.0
+        # Accept "N", "N/sec", "N/s", "N per sec"
+        for suffix in ("/sec", "/s", " per sec", "persec"):
+            if value.endswith(suffix):
+                value = value[: -len(suffix)].strip()
+                break
+        try:
+            rate = float(value)
+        except ValueError:
+            return 0.0
+        return rate if rate > 0 else 0.0
+
+    @property
+    def enabled(self) -> bool:
+        return self.rate > 0
+
+    def allow(self, tool_name: str) -> bool:
+        """Return True if a call to `tool_name` is allowed right now."""
+        if not self.enabled:
+            return True
+        now = time.monotonic()
+        with self._lock:
+            tokens, last = self._buckets.get(tool_name, (self.capacity, now))
+            tokens = min(self.capacity, tokens + (now - last) * self.rate)
+            if tokens >= 1.0:
+                tokens -= 1.0
+                self._buckets[tool_name] = (tokens, now)
+                return True
+            self._buckets[tool_name] = (tokens, now)
+            return False
 
 class McpRpcRegistry(JsonRpcRegistry):
     """JSON-RPC registry with custom error handling for MCP tools"""
@@ -392,6 +454,13 @@ class McpServer:
         self._tool_whitelist: set[str] | None = None
         self._profile_protected: set[str] = set()
 
+        # Session auth token (opt-in enforcement, see http handler). None means
+        # no token is configured. Set by the plugin layer on server start.
+        self.auth_token: str | None = None
+        # Per-tool rate limiter, configured from IDA_MCP_RATE_LIMIT. Disabled by
+        # default so nothing changes unless the user opts in.
+        self.rate_limiter = _ToolRateLimiter()
+
         # Register MCP protocol methods with correct names
         self.registry = JsonRpcRegistry()
         self.registry.methods["ping"] = self._mcp_ping
@@ -631,6 +700,14 @@ class McpServer:
         if not self._tool_allowed_by_profile(name):
             return {
                 "content": [{"type": "text", "text": f"Tool '{name}' is disabled by the active tool profile (IDA_MCP_PROFILE)."}],
+                "isError": True,
+            }
+
+        # Per-tool rate limiting (opt-in via IDA_MCP_RATE_LIMIT). Disabled by
+        # default, in which case allow() always returns True.
+        if not self.rate_limiter.allow(name):
+            return {
+                "content": [{"type": "text", "text": f"Rate limit exceeded for tool '{name}'. Configured limit: {self.rate_limiter.rate} call(s)/sec (IDA_MCP_RATE_LIMIT)."}],
                 "isError": True,
             }
 

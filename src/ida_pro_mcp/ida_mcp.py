@@ -119,7 +119,7 @@ class MCP(idaapi.plugin_t):
     wanted_name = "MCP"
     wanted_hotkey = "Ctrl-Alt-M"
 
-    DEFAULT_HOST = "0.0.0.0"
+    DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 13337
 
     def init(self):
@@ -149,24 +149,55 @@ class MCP(idaapi.plugin_t):
 
         return idaapi.PLUGIN_KEEP
 
+    def _remove_connection_file(self):
+        """Best-effort removal of the connection file (import-safe)."""
+        try:
+            if TYPE_CHECKING:
+                from .ida_mcp.connection import remove_connection_file
+            else:
+                from ida_mcp.connection import remove_connection_file
+            remove_connection_file()
+        except Exception:
+            pass
+
     def _start_server(self):
         """(Re)start the MCP HTTP server. Used by both auto-start and the hotkey."""
         if self.mcp:
             self.mcp.stop()
             self.mcp = None
+            self._remove_connection_file()
 
         # HACK: ensure fresh load of ida_mcp package
         unload_package("ida_mcp")
         if TYPE_CHECKING:
             from .ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
+            from .ida_mcp.connection import (
+                generate_token,
+                write_connection_file,
+                remove_connection_file,
+            )
         else:
             from ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
+            from ida_mcp.connection import (
+                generate_token,
+                write_connection_file,
+                remove_connection_file,
+            )
 
         try:
             init_caches()
         except Exception as e:
             print(f"[MCP] Cache init failed: {e}")
 
+        # Generate a fresh session token for this server lifetime. It is always
+        # written to the connection file and accepted if presented; it is only
+        # *required* when IDA_MCP_REQUIRE_TOKEN is set (enforced in the handler).
+        token = generate_token()
+        MCP_SERVER.auth_token = token
+
+        # Discover an available port starting at the configured one. The first
+        # free port in the range is bound; the actual bound port is recorded in
+        # the connection file so the bridge can find it without configuration.
         port = self.port
         max_port = port + 100
         while port < max_port:
@@ -176,12 +207,21 @@ class MCP(idaapi.plugin_t):
                 )
                 print(f"  Config: http://{self.host}:{port}/config.html")
                 self.mcp = MCP_SERVER
+                try:
+                    path = write_connection_file(port, token)
+                    print(f"  Connection file: {path}")
+                except Exception as e:
+                    print(f"[MCP] Failed to write connection file: {e}")
                 return
             except OSError as e:
                 if e.errno in (48, 98, 10048):  # Address already in use
                     port += 1
                 else:
+                    # Clean up any stale connection file from a previous run.
+                    remove_connection_file()
                     raise
+        # No port was available: ensure no stale connection file is left behind.
+        remove_connection_file()
         print(f"[MCP] Error: No available port in range {self.port}-{max_port - 1}")
 
     def run(self, arg):
@@ -194,6 +234,8 @@ class MCP(idaapi.plugin_t):
         ida_kernwin.unregister_action(CONFIG_ACTION_ID)
         if self.mcp:
             self.mcp.stop()
+            self.mcp = None
+            self._remove_connection_file()
 
 
 def PLUGIN_ENTRY():

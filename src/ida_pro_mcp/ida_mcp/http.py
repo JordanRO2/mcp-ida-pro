@@ -1,5 +1,6 @@
 import html
 import json
+import os
 import re
 import ida_netnode
 from urllib.parse import urlparse, parse_qs
@@ -7,6 +8,7 @@ from typing import TypeVar, cast
 from http.server import HTTPServer
 
 from .sync import idasync
+from .connection import tokens_match
 from .rpc import (
     McpRpcRegistry,
     McpHttpRequestHandler,
@@ -14,6 +16,10 @@ from .rpc import (
     MCP_UNSAFE,
     get_cached_output,
 )
+
+
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 T = TypeVar("T")
@@ -97,12 +103,43 @@ class IdaMcpHttpRequestHandler(McpHttpRequestHandler):
             case "direct":
                 self.mcp_server.cors_allowed_origins = None
 
+    def _check_auth_token(self) -> bool:
+        """Enforce the session auth token on MCP endpoints when opted in.
+
+        Enforcement is OPT-IN via the IDA_MCP_REQUIRE_TOKEN environment
+        variable. When enforcement is disabled (the default) this is a no-op
+        and any request is allowed — preserving the original behavior. When a
+        token is configured AND enforcement is enabled, the request must carry
+        a matching `Authorization: Bearer <token>` header; otherwise it is
+        rejected with HTTP 401.
+        """
+        if not _truthy(os.environ.get("IDA_MCP_REQUIRE_TOKEN")):
+            return True
+        expected = getattr(self.mcp_server, "auth_token", None)
+        if not expected:
+            # Enforcement requested but no token configured: nothing to compare
+            # against, so do not lock the user out.
+            return True
+        header = self.headers.get("Authorization", "")
+        provided = None
+        if header.lower().startswith("bearer "):
+            provided = header[7:].strip()
+        if not tokens_match(expected, provided):
+            self.send_error(401, "Unauthorized")
+            return False
+        return True
+
     def do_POST(self):
         """Handles POST requests."""
-        if urlparse(self.path).path == "/config":
+        path = urlparse(self.path).path
+        if path == "/config":
             if not self._check_origin():
                 return
             self._handle_config_post()
+        elif path in ("/mcp", "/sse"):
+            if not self._check_auth_token():
+                return
+            super().do_POST()
         else:
             super().do_POST()
 
@@ -116,6 +153,10 @@ class IdaMcpHttpRequestHandler(McpHttpRequestHandler):
                 return
             self._handle_config_get()
             return
+
+        if path == "/sse":
+            if not self._check_auth_token():
+                return
 
         # Handle output download requests
         output_match = re.match(r"^/output/([a-f0-9-]+)\.(\w+)$", path)
