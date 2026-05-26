@@ -18,6 +18,7 @@ import ida_nalt
 import ida_ua
 import idc
 
+from . import compat
 from .rpc import tool
 from .sync import idasync, tool_timeout, IDAError
 from .utils import (
@@ -432,10 +433,11 @@ def find_crypto(
                 ea = seg_start
 
                 while ea < seg_end - pattern_len:
-                    found = ida_bytes.bin_search(
+                    # Use the version-compat searcher (IDA 9.0 dropped the old
+                    # ida_bytes.bin_search signature in favour of find_bytes).
+                    found = compat.raw_bin_search(
                         ea, seg_end, pattern, None,
-                        ida_bytes.BIN_SEARCH_FORWARD | ida_bytes.BIN_SEARCH_NOBREAK,
-                        0,
+                        ida_bytes.BIN_SEARCH_FORWARD | ida_bytes.BIN_SEARCH_NOSHOW,
                     )
                     if found == idaapi.BADADDR or found >= seg_end:
                         break
