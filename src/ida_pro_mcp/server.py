@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:
     from ida_pro_mcp.ida_mcp.zeromcp import McpServer
     from ida_pro_mcp.ida_mcp.zeromcp.jsonrpc import JsonRpcRequest, JsonRpcResponse
-    from ida_pro_mcp.ida_mcp import connection
+    from ida_pro_mcp.ida_mcp.infrastructure import connection
 else:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "ida_mcp"))
     from zeromcp import McpServer

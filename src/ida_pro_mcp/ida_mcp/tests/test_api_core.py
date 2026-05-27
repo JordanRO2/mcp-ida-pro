@@ -1,6 +1,6 @@
 """Tests for api_core API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_has_keys,
@@ -17,7 +17,7 @@ from ..framework import (
     get_data_address,
 )
 from ..utils import Function, ConvertedNumber
-from ..api_core import (
+from ..interface.tools.core_tools import (
     lookup_funcs,
     int_convert,
     list_funcs,

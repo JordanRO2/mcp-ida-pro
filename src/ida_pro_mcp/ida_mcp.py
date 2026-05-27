@@ -153,9 +153,9 @@ class MCP(idaapi.plugin_t):
         """Best-effort removal of the connection file (import-safe)."""
         try:
             if TYPE_CHECKING:
-                from .ida_mcp.connection import remove_connection_file
+                from .ida_mcp.infrastructure.connection import remove_connection_file
             else:
-                from ida_mcp.connection import remove_connection_file
+                from ida_mcp.infrastructure.connection import remove_connection_file
             remove_connection_file()
         except Exception:
             pass
@@ -171,14 +171,14 @@ class MCP(idaapi.plugin_t):
         unload_package("ida_mcp")
         if TYPE_CHECKING:
             from .ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
-            from .ida_mcp.connection import (
+            from .ida_mcp.infrastructure.connection import (
                 generate_token,
                 write_connection_file,
                 remove_connection_file,
             )
         else:
             from ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
-            from ida_mcp.connection import (
+            from ida_mcp.infrastructure.connection import (
                 generate_token,
                 write_connection_file,
                 remove_connection_file,

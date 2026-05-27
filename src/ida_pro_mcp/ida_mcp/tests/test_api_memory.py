@@ -1,6 +1,6 @@
 """Tests for api_memory API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_non_empty,
@@ -14,7 +14,7 @@ from ..framework import (
     get_unmapped_address,
     get_named_address,
 )
-from ..api_memory import (
+from ..interface.tools.memory_tools import (
     get_bytes,
     get_int,
     get_string,

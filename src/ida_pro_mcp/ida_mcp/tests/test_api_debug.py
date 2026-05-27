@@ -6,14 +6,14 @@ Tests skip gracefully when no debugger is active.
 
 import idaapi
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_has_keys,
     assert_is_list,
     get_any_function,
 )
-from ..api_debug import (
+from ..interface.tools.debug_tools import (
     dbg_bps,
     dbg_add_bp,
     dbg_delete_bp,
@@ -23,7 +23,7 @@ from ..api_debug import (
     dbg_stacktrace,
     dbg_read,
 )
-from ..sync import IDAError
+from ..infrastructure.sync.sync import IDAError
 
 
 def _require_debugger():

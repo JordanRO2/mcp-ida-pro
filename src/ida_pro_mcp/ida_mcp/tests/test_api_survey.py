@@ -1,6 +1,6 @@
 """Tests for api_survey API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_has_keys,
@@ -10,7 +10,7 @@ from ..framework import (
     optional,
     get_any_function,
 )
-from ..api_survey import survey_binary
+from ..interface.tools.survey_tools import survey_binary
 
 
 # ============================================================================

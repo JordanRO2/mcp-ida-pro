@@ -4,7 +4,7 @@ import ast
 import re
 from pathlib import Path
 
-from ..framework import test
+from ..infrastructure.framework import test
 
 
 # Tool docstrings are model-facing MCP descriptions in this repository; see
@@ -28,7 +28,8 @@ def _is_tool_decorator(dec: ast.expr) -> bool:
 
 def _iter_tool_functions():
     root = Path(__file__).resolve().parents[1]
-    for path in sorted(root.glob("api_*.py")):
+    tools_dir = root / "interface" / "tools"
+    for path in sorted(tools_dir.glob("*_tools.py")):
         source = path.read_text(encoding="utf-8")
         module = ast.parse(source)
         for node in module.body:

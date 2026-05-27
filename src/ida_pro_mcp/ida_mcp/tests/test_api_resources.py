@@ -1,13 +1,13 @@
 """Tests for api_resources MCP resource functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_valid_address,
     assert_non_empty,
     assert_is_list,
 )
-from ..api_resources import (
+from ..interface.resources.resources_resources import (
     idb_metadata_resource,
     idb_segments_resource,
     idb_entrypoints_resource,
@@ -20,7 +20,7 @@ from ..api_resources import (
     export_name_resource,
     xrefs_from_resource,
 )
-from ..sync import IDAError
+from ..infrastructure.sync.sync import IDAError
 
 
 CRACKME_MAIN = "0x123e"

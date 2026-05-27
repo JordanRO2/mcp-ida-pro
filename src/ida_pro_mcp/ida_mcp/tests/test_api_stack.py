@@ -1,6 +1,6 @@
 """Tests for api_stack API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_valid_address,
@@ -9,7 +9,7 @@ from ..framework import (
     assert_error,
     get_data_address,
 )
-from ..api_stack import (
+from ..interface.tools.stack_tools import (
     stack_frame,
     declare_stack,
     delete_stack,

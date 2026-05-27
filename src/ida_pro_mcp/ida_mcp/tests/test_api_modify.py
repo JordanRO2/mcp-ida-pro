@@ -1,6 +1,6 @@
 """Tests for api_modify API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_is_list,
@@ -9,7 +9,7 @@ from ..framework import (
     get_any_function,
     get_named_address,
 )
-from ..api_modify import (
+from ..interface.tools.modify_tools import (
     append_comments,
     set_comments,
     patch_asm,
@@ -18,8 +18,8 @@ from ..api_modify import (
     define_code,
     undefine,
 )
-from ..api_memory import get_bytes, patch
-from ..api_core import lookup_funcs
+from ..interface.tools.memory_tools import get_bytes, patch
+from ..interface.tools.core_tools import lookup_funcs
 
 
 CRACKME_MAIN = "0x123e"
@@ -312,7 +312,7 @@ def test_rename_local_roundtrip():
 @test(binary="typed_fixture.elf")
 def test_rename_stack_roundtrip():
     """rename(stack=...) can rename and restore a real stack member."""
-    from ..api_stack import stack_frame
+    from ..interface.tools.stack_tools import stack_frame
 
     try:
         result = rename(

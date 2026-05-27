@@ -1,6 +1,6 @@
 """Tests for framework helper utilities used by the IDA test suite."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     assert_shape,
     assert_typed_dict,
