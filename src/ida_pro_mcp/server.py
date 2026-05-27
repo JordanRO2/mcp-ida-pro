@@ -15,7 +15,7 @@ else:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "ida_mcp"))
     from zeromcp import McpServer
     from zeromcp.jsonrpc import JsonRpcRequest, JsonRpcResponse
-    import connection
+    from infrastructure import connection
 
     sys.path.pop(0)
 
