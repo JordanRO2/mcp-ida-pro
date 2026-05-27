@@ -27,7 +27,7 @@ import idaapi
 import idautils
 import idc
 
-from .sync import IDAError
+from .infrastructure.sync.sync import IDAError
 
 # ============================================================================
 # Analysis Prompt Configuration
@@ -608,7 +608,7 @@ class Page(TypedDict, Generic[T]):
 
 
 def get_image_size() -> int:
-    from . import compat
+    from .infrastructure import compat
 
     omin_ea = compat.inf_get_omin_ea()
     omax_ea = compat.inf_get_omax_ea()
@@ -722,7 +722,7 @@ def get_function(addr: int, *, raise_error: Literal[False]) -> Optional[Function
 
 
 def get_function(addr, *, raise_error=True):
-    from . import compat
+    from .infrastructure import compat
 
     fn = idaapi.get_func(addr)
     if fn is None:
@@ -736,7 +736,7 @@ def get_function(addr, *, raise_error=True):
 
 
 def get_prototype(fn: ida_funcs.func_t) -> Optional[str]:
-    from . import compat
+    from .infrastructure import compat
 
     prototype = compat.get_func_prototype(fn)
     if prototype is not None:
@@ -1009,7 +1009,7 @@ def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, list[str]]:
 def get_stack_frame_variables_internal(
     fn_addr: int, raise_error: bool
 ) -> list[StackFrameVariable]:
-    from .sync import ida_major
+    from .infrastructure.sync.sync import ida_major
 
     if ida_major < 9:
         return []

@@ -1,8 +1,8 @@
 """Binary-specific tests for tests/typed_fixture.elf."""
 
-from ..framework import test, assert_is_list, assert_ok, skip_test
-from ..api_core import lookup_funcs, find_regex, list_globals
-from ..api_analysis import (
+from ..infrastructure.framework import test, assert_is_list, assert_ok, skip_test
+from ..interface.tools.core_tools import lookup_funcs, find_regex, list_globals
+from ..interface.tools.analysis_tools import (
     decompile,
     disasm,
     xrefs_to,
@@ -12,7 +12,7 @@ from ..api_analysis import (
     export_funcs,
     callgraph,
 )
-from ..api_memory import (
+from ..interface.tools.memory_tools import (
     get_string,
     get_global_value,
     get_int,
@@ -20,14 +20,14 @@ from ..api_memory import (
     patch,
     get_bytes,
 )
-from ..api_types import search_structs, set_type, read_struct, infer_types
-from ..api_resources import (
+from ..interface.tools.types_tools import search_structs, set_type, read_struct, infer_types
+from ..interface.resources.resources_resources import (
     struct_name_resource,
     import_name_resource,
     export_name_resource,
 )
-from ..api_modify import rename
-from ..api_stack import stack_frame
+from ..interface.tools.modify_tools import rename
+from ..interface.tools.stack_tools import stack_frame
 
 
 MAIN = "0x1013ef0"

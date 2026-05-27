@@ -1,0 +1,126 @@
+"""Domain entities for the IDA Pro MCP server.
+
+These are the structured data records and request/operation shapes that flow
+through the tool layer, modeled as ``TypedDict`` types. For now they are
+re-exported from the legacy ``utils`` module; the tool-migration phase will
+relocate the definitions here and have ``utils`` import them back (or drop the
+duplication entirely). Import them from this package going forward, e.g.::
+
+    from ..domain.entities import Function, Xref, Breakpoint
+
+Canonical (current) definitions live in
+``ida_pro_mcp.ida_mcp.utils``.
+"""
+
+from ...utils import (
+    # Output data records
+    Metadata,
+    Function,
+    Global,
+    Import,
+    String,
+    Segment,
+    DisassemblyLine,
+    Argument,
+    StackFrameVariable,
+    DisassemblyFunction,
+    Xref,
+    StructureMember,
+    StructureDefinition,
+    RegisterValue,
+    ThreadRegisters,
+    Breakpoint,
+    FunctionAnalysis,
+    BasicBlock,
+    # Memory read/write records
+    MemoryRead,
+    MemoryPatch,
+    IntRead,
+    IntWrite,
+    # Operation / mutation requests
+    CommentOp,
+    CommentAppendOp,
+    AsmPatchOp,
+    FunctionRename,
+    GlobalRename,
+    LocalRename,
+    StackRename,
+    RenameBatch,
+    BreakpointOp,
+    BreakpointConditionBase,
+    StackVarDecl,
+    StackVarDelete,
+    DefineOp,
+    UndefineOp,
+    # Type-system edits
+    TypeEdit,
+    EnumMemberUpsert,
+    EnumUpsert,
+    TypeApplyBatch,
+    # Query requests
+    StructFieldQuery,
+    XrefQuery,
+    ListQuery,
+    FunctionQuery,
+    EntityQuery,
+    FuncProfileQuery,
+    AnalyzeBatchQuery,
+    ImportQuery,
+    TypeInspectQuery,
+    TypeQuery,
+    StructRead,
+)
+
+__all__ = [
+    "Metadata",
+    "Function",
+    "Global",
+    "Import",
+    "String",
+    "Segment",
+    "DisassemblyLine",
+    "Argument",
+    "StackFrameVariable",
+    "DisassemblyFunction",
+    "Xref",
+    "StructureMember",
+    "StructureDefinition",
+    "RegisterValue",
+    "ThreadRegisters",
+    "Breakpoint",
+    "FunctionAnalysis",
+    "BasicBlock",
+    "MemoryRead",
+    "MemoryPatch",
+    "IntRead",
+    "IntWrite",
+    "CommentOp",
+    "CommentAppendOp",
+    "AsmPatchOp",
+    "FunctionRename",
+    "GlobalRename",
+    "LocalRename",
+    "StackRename",
+    "RenameBatch",
+    "BreakpointOp",
+    "BreakpointConditionBase",
+    "StackVarDecl",
+    "StackVarDelete",
+    "DefineOp",
+    "UndefineOp",
+    "TypeEdit",
+    "EnumMemberUpsert",
+    "EnumUpsert",
+    "TypeApplyBatch",
+    "StructFieldQuery",
+    "XrefQuery",
+    "ListQuery",
+    "FunctionQuery",
+    "EntityQuery",
+    "FuncProfileQuery",
+    "AnalyzeBatchQuery",
+    "ImportQuery",
+    "TypeInspectQuery",
+    "TypeQuery",
+    "StructRead",
+]

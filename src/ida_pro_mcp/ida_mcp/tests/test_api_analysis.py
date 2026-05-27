@@ -1,6 +1,6 @@
 """Tests for api_analysis API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_has_keys,
@@ -16,7 +16,7 @@ from ..framework import (
     get_data_address,
     get_unmapped_address,
 )
-from ..api_analysis import (
+from ..interface.tools.analysis_tools import (
     decompile,
     disasm,
     func_profile,

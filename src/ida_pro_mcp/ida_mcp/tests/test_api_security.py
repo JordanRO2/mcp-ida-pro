@@ -1,6 +1,6 @@
 """Tests for api_security API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_has_keys,
@@ -12,7 +12,7 @@ from ..framework import (
     get_any_function,
     get_unmapped_address,
 )
-from ..api_security import (
+from ..interface.tools.security_tools import (
     detect_vulns,
     find_crypto,
     find_dangerous_callers,

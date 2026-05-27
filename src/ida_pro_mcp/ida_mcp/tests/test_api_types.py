@@ -1,6 +1,6 @@
 """Tests for api_types API functions."""
 
-from ..framework import (
+from ..infrastructure.framework import (
     test,
     skip_test,
     assert_is_list,
@@ -13,7 +13,7 @@ from ..framework import (
     get_unmapped_address,
     get_named_address,
 )
-from ..api_types import (
+from ..interface.tools.types_tools import (
     declare_type,
     enum_upsert,
     read_struct,
@@ -145,7 +145,7 @@ def test_read_struct_name_resolution():
     if not fn_addr:
         skip_test("binary has no functions")
 
-    from ..api_core import lookup_funcs
+    from ..interface.tools.core_tools import lookup_funcs
 
     fn_info = lookup_funcs(fn_addr)
     assert_ok(fn_info[0], "fn")

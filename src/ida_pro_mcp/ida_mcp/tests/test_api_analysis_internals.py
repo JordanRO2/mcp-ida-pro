@@ -1,12 +1,19 @@
 """Targeted tests for deeper internal helpers in api_analysis.py."""
 
-from ..framework import test, assert_non_empty
-from ..api_analysis import (
-    _resolve_insn_scan_ranges,
-    _scan_insn_ranges,
-    _value_to_le_bytes,
-    _value_candidates_for_immediate,
-)
+from ..infrastructure.framework import test, assert_non_empty
+from ..container import get_analysis_service
+from ..infrastructure.adapters.analysis_adapter import AnalysisAdapter
+
+# Rule-4 relocation: these former module-level helpers in api_analysis.py are now
+# instance methods on AnalysisService (range resolution / scan, which need the
+# IDA adapter) and static methods on AnalysisAdapter (immediate encoding, renamed
+# without the leading underscore). Re-bind them to the names the tests use so the
+# test bodies and assertions stay unchanged.
+_analysis_service = get_analysis_service()
+_resolve_insn_scan_ranges = _analysis_service._resolve_insn_scan_ranges
+_scan_insn_ranges = _analysis_service._scan_insn_ranges
+_value_to_le_bytes = AnalysisAdapter.value_to_le_bytes
+_value_candidates_for_immediate = AnalysisAdapter.value_candidates_for_immediate
 
 
 @test(binary="typed_fixture.elf")

@@ -1,7 +1,7 @@
 """Tests for api_python API functions."""
 
-from ..framework import test
-from ..api_python import py_eval
+from ..infrastructure.framework import test
+from ..interface.tools.python_exec_tools import py_eval
 
 
 @test()
