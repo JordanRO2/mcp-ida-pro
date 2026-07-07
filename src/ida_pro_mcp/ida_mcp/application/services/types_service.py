@@ -22,6 +22,7 @@ from ...utils import (
     get_type_by_name,
     parse_decls_ctypes,
     my_modifier_t,
+    hexrays_local_var_exists,
 )
 from ...infrastructure.adapters.types_adapter import TypesAdapter
 
@@ -827,12 +828,14 @@ class TypesService:
                 signature = str(edit.get("signature") or type_text).strip()
                 tif = self._parse_function_tinfo(signature)
                 ok = ida_typeinf.apply_tinfo(func.start_ea, tif, ida_typeinf.PT_SIL)
-                return {
-                    "edit": edit,
-                    "kind": kind,
-                    "ok": ok,
-                    "error": None if ok else "Failed to apply function type",
-                }
+                result = {"edit": edit, "kind": kind, "ok": ok}
+                if not ok:
+                    result["error"] = (
+                        f"Failed to apply function type at {hex(func.start_ea)} for signature "
+                        f"{signature!r}; ensure all referenced types are declared in the local "
+                        "type library"
+                    )
+                return result
 
             if kind == "global":
                 ea = idaapi.BADADDR
@@ -851,12 +854,12 @@ class TypesService:
 
                 tif = self._parse_type_tinfo(type_text)
                 ok = ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.PT_SIL)
-                return {
-                    "edit": edit,
-                    "kind": kind,
-                    "ok": ok,
-                    "error": None if ok else "Failed to apply global type",
-                }
+                result = {"edit": edit, "kind": kind, "ok": ok}
+                if not ok:
+                    result["error"] = (
+                        f"Failed to apply global type at {hex(ea)} for type {type_text!r}"
+                    )
+                return result
 
             if kind == "local":
                 addr_text = str(edit.get("addr", "")).strip()
@@ -873,12 +876,18 @@ class TypesService:
                 new_tif = self._parse_type_tinfo(type_text)
                 modifier = my_modifier_t(var_name, new_tif)
                 ok = ida_hexrays.modify_user_lvars(func.start_ea, modifier)
-                return {
-                    "edit": edit,
-                    "kind": kind,
-                    "ok": ok,
-                    "error": None if ok else "Failed to apply local variable type",
-                }
+                result = {"edit": edit, "kind": kind, "ok": ok}
+                if not ok:
+                    if not hexrays_local_var_exists(func.start_ea, var_name):
+                        result["error"] = (
+                            f"Local variable {var_name!r} not found in function at "
+                            f"{hex(func.start_ea)}"
+                        )
+                    else:
+                        result["error"] = (
+                            f"Failed to apply type {type_text!r} to local variable {var_name!r}"
+                        )
+                return result
 
             if kind == "stack":
                 addr_text = str(edit.get("addr", "")).strip()
@@ -911,12 +920,13 @@ class TypesService:
 
                 tif = self._parse_type_tinfo(type_text)
                 ok = ida_frame.set_frame_member_type(func, offset, tif)
-                return {
-                    "edit": edit,
-                    "kind": kind,
-                    "ok": ok,
-                    "error": None if ok else "Failed to set stack member type",
-                }
+                result = {"edit": edit, "kind": kind, "ok": ok}
+                if not ok:
+                    result["error"] = (
+                        f"Failed to set stack member type for {stack_name!r} at offset "
+                        f"{offset} in function at {hex(func.start_ea)}"
+                    )
+                return result
 
             return {"edit": edit, "kind": kind, "error": f"Unknown kind: {kind}"}
         except Exception as e:

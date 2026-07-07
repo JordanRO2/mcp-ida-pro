@@ -17,13 +17,51 @@ from ...utils import (
     parse_address,
     decompile_checked,
     refresh_decompiler_ctext,
+    hexrays_local_var_exists,
 )
 from ...infrastructure.sync.sync import IDAError
 from ...infrastructure.adapters.modify_adapter import ModifyAdapter
 
 
+MAX_BOOKMARK_SLOTS = 1024
+BOOKMARK_PREFIX = "idaMCP: "
+
+
+def rename_at_ea(
+    ea: int,
+    new_name: str,
+    *,
+    allow_overwrite: bool = False,
+    dry_run: bool = False,
+) -> "tuple[bool, str | None]":
+    """Rename at address with detailed error reporting."""
+    import idaapi
+
+    conflict_ea = idaapi.get_name_ea(idaapi.BADADDR, new_name)
+    if conflict_ea != idaapi.BADADDR and conflict_ea != ea and not allow_overwrite:
+        return (
+            False,
+            f"can't rename at {hex(ea)} as {new_name!r}: name already used at {hex(conflict_ea)}",
+        )
+    if dry_run:
+        return True, None
+    flags = idaapi.SN_CHECK
+    if allow_overwrite:
+        flags = idaapi.SN_CHECK | int(getattr(idaapi, "SN_FORCE", 0))
+    ok = idaapi.set_name(ea, new_name, flags)
+    if not ok:
+        return (
+            False,
+            f"Rename failed at {hex(ea)}: IDA rejected name {new_name!r} "
+            "(invalid identifier or internal conflict)",
+        )
+    return True, None
+
+
 class ModifyService:
     """High-level service for IDB-mutating operations."""
+
+    _OP_FORMAT_KINDS = frozenset({"hex", "dec", "char", "binary", "octal"})
 
     def __init__(self, adapter: ModifyAdapter):
         self.adapter = adapter
@@ -268,24 +306,12 @@ class ModifyService:
             return False
 
         def _set_name_checked(ea: int, new_name: str) -> "tuple[bool, str | None]":
-            conflict_ea = idaapi.get_name_ea(idaapi.BADADDR, new_name)
-            if (
-                conflict_ea != idaapi.BADADDR
-                and conflict_ea != ea
-                and not allow_overwrite
-            ):
-                return False, f"Name already exists at {hex(conflict_ea)}"
-
-            if dry_run:
-                return True, None
-
-            flags = idaapi.SN_CHECK
-            if allow_overwrite:
-                flags = idaapi.SN_CHECK | int(getattr(idaapi, "SN_FORCE", 0))
-            ok = idaapi.set_name(ea, new_name, flags)
-            if not ok:
-                return False, "Rename failed"
-            return True, None
+            return rename_at_ea(
+                ea,
+                new_name,
+                allow_overwrite=allow_overwrite,
+                dry_run=dry_run,
+            )
 
         def _place_func_in_vibe_dir(ea: int) -> "tuple[bool, str | None]":
             if dry_run:
@@ -494,11 +520,30 @@ class ModifyService:
                     success = True
                     error = None
                     if not dry_run:
-                        success = ida_hexrays.rename_lvar(func.start_ea, old_name, new_name)
-                        if success:
-                            refresh_decompiler_ctext(func.start_ea)
+                        if not ida_hexrays.init_hexrays_plugin():
+                            success = False
+                            error = (
+                                "Hex-Rays decompiler is not available "
+                                "(required for local variable rename)"
+                            )
+                        else:
+                            success = ida_hexrays.rename_lvar(func.start_ea, old_name, new_name)
+                            if success:
+                                refresh_decompiler_ctext(func.start_ea)
+                            elif not hexrays_local_var_exists(func.start_ea, old_name):
+                                error = (
+                                    f"Local variable {old_name!r} not found in function at "
+                                    f"{hex(func.start_ea)}"
+                                )
+                            else:
+                                error = (
+                                    f"Rename failed: could not rename local {old_name!r} "
+                                    f"to {new_name!r}"
+                                )
                     if not success:
-                        error = "Rename failed"
+                        error = error or (
+                            f"Rename failed: could not rename local {old_name!r} to {new_name!r}"
+                        )
 
                     result = {
                         "func_addr": func_addr,
@@ -621,10 +666,24 @@ class ModifyService:
                     success = True
                     error = None
                     if not dry_run:
-                        sval = ida_frame.soff_to_fpoff(func, offset)
-                        success = ida_frame.define_stkvar(func, new_name, sval, udm.type)
+                        _, conflict_udm = frame_tif.get_udm(new_name)
+                        if conflict_udm and new_name != old_name:
+                            success = False
+                            error = f"Stack variable name {new_name!r} already exists"
+                        else:
+                            sval = ida_frame.soff_to_fpoff(func, offset)
+                            success = ida_frame.define_stkvar(func, new_name, sval, udm.type)
+                            if not success:
+                                error = (
+                                    f"Rename failed: could not rename stack variable "
+                                    f"{old_name!r} to {new_name!r} in function at "
+                                    f"{hex(func.start_ea)}"
+                                )
                     if not success:
-                        error = "Rename failed"
+                        error = error or (
+                            f"Rename failed: could not rename stack variable {old_name!r} "
+                            f"to {new_name!r} in function at {hex(func.start_ea)}"
+                        )
 
                     result = {
                         "func_addr": func_addr,
@@ -839,3 +898,171 @@ class ModifyService:
                 results.append({"addr": addr_str, "error": str(e)})
 
         return results
+
+    # =====================================================================
+    # Decompiler cache / operand typing / typed-data creation
+    # =====================================================================
+
+    def force_recompile(self, items) -> dict:
+        invalidate_all = False
+        if items is None:
+            invalidate_all = True
+        elif isinstance(items, dict):
+            items = [items]
+        elif isinstance(items, list) and len(items) == 0:
+            invalidate_all = True
+
+        targets: list[int] = []
+        if invalidate_all:
+            targets = self.adapter.functions()
+        else:
+            for item in items or []:
+                addr_str = item.get("addr") if isinstance(item, dict) else None
+                if not addr_str:
+                    continue
+                try:
+                    ea = parse_address(addr_str)
+                    start = self.adapter.func_start_ea(ea)
+                    if start is not None:
+                        targets.append(start)
+                except Exception:
+                    pass
+
+        results = []
+        for ea in targets:
+            try:
+                self.adapter.mark_cfunc_dirty(ea)
+                results.append({"addr": hex(ea), "name": self.adapter.func_name(ea), "ok": True})
+            except Exception as e:
+                results.append({"addr": hex(ea), "ok": False, "error": str(e)})
+
+        return {
+            "summary": {
+                "total": len(results),
+                "ok": sum(1 for r in results if r.get("ok")),
+                "failed": sum(1 for r in results if not r.get("ok")),
+                "all": invalidate_all,
+            },
+            "results": results,
+        }
+
+    def set_op_type(self, items) -> list[dict]:
+        if isinstance(items, dict):
+            items = [items]
+
+        results = []
+        for item in items:
+            addr_str = item.get("addr", "")
+            op_n = int(item.get("op_n", 0))
+            kind = str(item.get("kind", "")).strip().lower()
+
+            try:
+                ea = parse_address(addr_str)
+            except Exception as e:
+                results.append({"addr": addr_str, "op_n": op_n, "kind": kind, "ok": False, "error": str(e)})
+                continue
+
+            ok = False
+            err = None
+            try:
+                if kind == "stroff":
+                    struct_name = str(item.get("struct", "")).strip()
+                    if not struct_name:
+                        err = "struct name required for kind='stroff'"
+                    else:
+                        delta = int(item.get("delta", 0))
+                        ok, err = self.adapter.op_stroff_by_struct(ea, op_n, struct_name, delta)
+                elif kind == "offset":
+                    target_str = str(item.get("target_addr", "")).strip()
+                    target_ea = parse_address(target_str) if target_str else 0
+                    ok = self.adapter.op_plain_offset(ea, op_n, target_ea)
+                elif kind == "stkvar":
+                    ok = self.adapter.op_stkvar(ea, op_n)
+                elif kind in self._OP_FORMAT_KINDS:
+                    ok = self.adapter.set_op_format(ea, op_n, kind)
+                else:
+                    err = f"unknown kind: {kind!r} (expected stroff/offset/stkvar/hex/dec/char/binary/octal)"
+            except Exception as e:
+                err = str(e)
+
+            result = {"addr": addr_str, "op_n": op_n, "kind": kind, "ok": ok}
+            if err is not None and not ok:
+                result["error"] = err
+            results.append(result)
+
+        return results
+
+    def make_data(self, items) -> list[dict]:
+        if isinstance(items, dict):
+            items = [items]
+
+        results = []
+        for item in items:
+            addr_str = item.get("addr", "")
+            type_decl = str(item.get("type", "")).strip()
+            name = str(item.get("name", "")).strip()
+            delete_existing = bool(item.get("delete_existing", True))
+
+            try:
+                ea = parse_address(addr_str)
+            except Exception as e:
+                results.append({"addr": addr_str, "ok": False, "error": str(e)})
+                continue
+
+            if not type_decl:
+                results.append({"addr": addr_str, "ok": False, "error": "type declaration is required"})
+                continue
+
+            decl = type_decl if type_decl.endswith(";") else type_decl + ";"
+
+            try:
+                if not self.adapter.set_type(ea, decl):
+                    results.append({"addr": addr_str, "ok": False, "error": f"SetType rejected declaration: {decl!r}"})
+                    continue
+
+                size = self.adapter.guess_size(ea)
+
+                if delete_existing and size > 0:
+                    self.adapter.del_items_expand(ea, size)
+                    self.adapter.set_type(ea, decl)  # re-apply: del_items can clobber the binding
+
+                if name:
+                    self.adapter.set_name(ea, name)
+
+                self.adapter.clear_cached_cfuncs()
+
+                results.append({
+                    "addr": addr_str,
+                    "name": name or self.adapter.get_name(ea),
+                    "type": self.adapter.get_type(ea),
+                    "size": size,
+                    "ok": True,
+                })
+            except Exception as e:
+                results.append({"addr": addr_str, "ok": False, "error": str(e)})
+
+        return results
+
+    def add_bookmark(self, addr, name, prefix=BOOKMARK_PREFIX) -> dict:
+        try:
+            ea = parse_address(addr)
+        except Exception as e:
+            return {"addr": addr, "ok": False, "error": str(e)}
+        title = f"{prefix}{name}"
+        badaddr = self.adapter.BADADDR
+        free_slot = None
+        for slot in range(MAX_BOOKMARK_SLOTS):
+            slot_ea = self.adapter.get_bookmark(slot)
+            if slot_ea == badaddr:
+                if free_slot is None:
+                    free_slot = slot
+                continue
+            if slot_ea == ea:
+                free_slot = slot
+                break
+        if free_slot is None:
+            return {"addr": addr, "ea": hex(ea), "slot": None, "title": title,
+                    "prefix": prefix, "ok": False, "error": "No free bookmark slot"}
+        self.adapter.put_bookmark(ea, 0, 0, 0, free_slot, title)
+        return {"addr": addr, "ea": hex(ea), "slot": free_slot, "title": title,
+                "prefix": prefix, "ok": True}

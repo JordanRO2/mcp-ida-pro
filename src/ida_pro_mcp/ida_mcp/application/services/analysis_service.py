@@ -143,23 +143,11 @@ class AnalysisService:
     # ------------------------------------------------------------------
 
     def decompile(self, addr: str, timeout=None) -> dict:
-        import idaapi
-
         try:
-            try:
-                start = parse_address(addr)
-            except IDAError:
-                ea = idaapi.get_name_ea(idaapi.BADADDR, addr)
-                if ea == idaapi.BADADDR:
-                    return {
-                        "addr": addr,
-                        "code": None,
-                        "error": f"Function not found: {addr!r}",
-                    }
-                start = ea
-            code = decompile_function_safe(start)
+            start = parse_address(addr)
+            code, err = decompile_function_safe(start)
             if code is None:
-                return {"addr": addr, "code": None, "error": "Decompilation failed"}
+                return {"addr": addr, "code": None, "error": err or "Decompilation failed"}
             return {"addr": addr, "code": code}
         except Exception as e:
             return {"addr": addr, "code": None, "error": str(e)}
@@ -185,18 +173,7 @@ class AnalysisService:
             offset = 0
 
         try:
-            try:
-                start = parse_address(addr)
-            except IDAError:
-                ea = idaapi.get_name_ea(idaapi.BADADDR, addr)
-                if ea == idaapi.BADADDR:
-                    return {
-                        "addr": addr,
-                        "asm": None,
-                        "error": f"Function not found: {addr!r}",
-                        "cursor": {"done": True},
-                    }
-                start = ea
+            start = parse_address(addr)
             func = self.adapter.get_func(start)
 
             # Get segment info
@@ -505,10 +482,10 @@ class AnalysisService:
                     analysis["prototype"] = get_prototype(fn)
 
                 if include_decompile:
-                    code = decompile_function_safe(fn.start_ea)
+                    code, err = decompile_function_safe(fn.start_ea)
                     analysis["decompile"] = code
                     if code is None:
-                        analysis["decompile_error"] = "Decompilation failed"
+                        analysis["decompile_error"] = err or "Decompilation failed"
 
                 if include_disasm:
                     lines, disasm_truncated = self.adapter.disasm_lines_limited(
@@ -534,6 +511,8 @@ class AnalysisService:
                         "to_count": len(xrefs.get("to", [])),
                         "from_count": len(xrefs.get("from", [])),
                     }
+                    if not xrefs.get("to") and not xrefs.get("from"):
+                        analysis["xrefs"]["message"] = "No cross-references to this address"
 
                 if include_callers:
                     callers = get_callers(hex(fn.start_ea), limit=max_callers)
@@ -610,9 +589,15 @@ class AnalysisService:
 
         for addr in addrs:
             try:
+                ea = parse_address(addr)
+                if not self.adapter.is_mapped(ea):
+                    results.append(
+                        {"addr": addr, "xrefs": None, "error": f"Address not mapped: {addr}"}
+                    )
+                    continue
                 xrefs = []
                 more = False
-                for xref in self.adapter.xrefs_to(parse_address(addr)):
+                for xref in self.adapter.xrefs_to(ea):
                     if len(xrefs) >= limit:
                         more = True
                         break
@@ -623,7 +608,10 @@ class AnalysisService:
                             fn=get_function(xref.frm, raise_error=False),
                         )
                     )
-                results.append({"addr": addr, "xrefs": xrefs, "more": more})
+                entry = {"addr": addr, "xrefs": xrefs, "more": more, "xref_count": len(xrefs)}
+                if not xrefs:
+                    entry["message"] = "No cross-references to this address"
+                results.append(entry)
             except Exception as e:
                 results.append({"addr": addr, "xrefs": None, "error": str(e)})
 
@@ -678,6 +666,9 @@ class AnalysisService:
                     if target == idaapi.BADADDR:
                         raise ValueError(f"Failed to resolve address/name: {q}")
 
+                if not self.adapter.is_mapped(target):
+                    raise ValueError(f"Address not mapped: {q}")
+
                 rows: list[dict] = []
                 if direction in {"to", "both"}:
                     for xr in self.adapter.xrefs_to_flagged(target, 0):
@@ -731,18 +722,19 @@ class AnalysisService:
                     rows.sort(key=lambda r: int(str(r["addr"]), 16), reverse=descending)
 
                 page = paginate(rows, offset, count)
-                results.append(
-                    {
-                        "query": q,
-                        "resolved_addr": hex(target),
-                        "direction": direction,
-                        "xref_type": xref_type,
-                        "data": page["data"],
-                        "next_offset": page["next_offset"],
-                        "total": len(rows),
-                        "error": None,
-                    }
-                )
+                page_result = {
+                    "query": q,
+                    "resolved_addr": hex(target),
+                    "direction": direction,
+                    "xref_type": xref_type,
+                    "data": page["data"],
+                    "next_offset": page["next_offset"],
+                    "total": len(rows),
+                    "error": None,
+                }
+                if len(rows) == 0:
+                    page_result["message"] = "No cross-references to this address"
+                results.append(page_result)
             except Exception as e:
                 results.append(
                     {
@@ -808,7 +800,10 @@ class AnalysisService:
                             fn=get_function(xref.frm, raise_error=False),
                         )
                     ]
-                results.append({"struct": struct_name, "field": field_name, "xrefs": xrefs})
+                field_result = {"struct": struct_name, "field": field_name, "xrefs": xrefs}
+                if not xrefs:
+                    field_result["message"] = "No cross-references to this struct field"
+                results.append(field_result)
             except Exception as e:
                 results.append(
                     {
@@ -1538,7 +1533,10 @@ class AnalysisService:
 
                 if format == "json":
                     func_data["asm"] = get_assembly_lines(ea)
-                    func_data["code"] = decompile_function_safe(ea)
+                    code, err = decompile_function_safe(ea)
+                    func_data["code"] = code
+                    if code is None and err:
+                        func_data["decompile_error"] = err
                     func_data["xrefs"] = get_all_xrefs(ea)
 
                 results.append(func_data)

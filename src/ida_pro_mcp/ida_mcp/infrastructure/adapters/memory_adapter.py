@@ -19,6 +19,38 @@ class MemoryAdapter:
     def get_bytes(self, ea: int, size: int):
         return ida_bytes.get_bytes(ea, size)
 
+    def read_bytes_bss_safe(self, ea: int, size: int) -> bytes:
+        """Read ``size`` bytes at ``ea``, substituting 0 for unloaded bytes.
+
+        IDA reports 0xFF for bytes that belong to the address space but are not
+        backed by file content (e.g. ``.bss`` / virtual space). Callers expect
+        zero-initialized virtual memory, so unloaded bytes are read as 0 and the
+        return is always exactly ``size`` bytes long (2fee279).
+        """
+        out = bytearray(size)
+        for i in range(size):
+            if ida_bytes.is_loaded(ea + i):
+                out[i] = ida_bytes.get_byte(ea + i)
+        return bytes(out)
+
+    def read_int_bss_safe(self, ea: int, size: int) -> int:
+        """Read an int of ``size`` bytes at ``ea`` honoring IDB endianness.
+
+        Returns 0 for unloaded (``.bss`` / virtual) space instead of the 0xFF
+        bytes IDA reports there (2fee279).
+        """
+        if not ida_bytes.is_loaded(ea):
+            return 0
+        if size == 1:
+            return ida_bytes.get_byte(ea)
+        if size == 2:
+            return ida_bytes.get_word(ea)
+        if size == 4:
+            return ida_bytes.get_dword(ea)
+        if size == 8:
+            return ida_bytes.get_qword(ea)
+        raise ValueError(f"unsupported integer size: {size}")
+
     def is_mapped(self, ea: int) -> bool:
         return ida_bytes.is_mapped(ea)
 
@@ -57,13 +89,7 @@ class MemoryAdapter:
                 return '""'
             return_string = raw.decode("utf-8", errors="replace").strip()
             return f'"{return_string}"'
-        elif size == 1:
-            return hex(ida_bytes.get_byte(ea))
-        elif size == 2:
-            return hex(ida_bytes.get_word(ea))
-        elif size == 4:
-            return hex(ida_bytes.get_dword(ea))
-        elif size == 8:
-            return hex(ida_bytes.get_qword(ea))
-        else:
-            return " ".join(hex(x) for x in ida_bytes.get_bytes(ea, size))
+
+        if size in (1, 2, 4, 8):
+            return hex(self.read_int_bss_safe(ea, size))
+        return " ".join(hex(b) for b in self.read_bytes_bss_safe(ea, size))

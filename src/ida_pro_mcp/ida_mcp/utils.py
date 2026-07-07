@@ -438,6 +438,32 @@ class UndefineOp(TypedDict, total=False):
     size: Annotated[int, "Optional size in bytes"]
 
 
+class ForceRecompileOp(TypedDict, total=False):
+    """Force-recompile (Hex-Rays cache invalidate) for one function."""
+
+    addr: Annotated[str, "Function entry address (hex or decimal)"]
+
+
+class SetOpTypeOp(TypedDict, total=False):
+    """Operand-typing op (GUI 'Y' / 'O' / '#' equivalent)."""
+
+    addr: Annotated[str, "Instruction address (hex or decimal)"]
+    op_n: Annotated[int, "Operand index (0 = first operand)"]
+    kind: Annotated[str, "stroff|offset|hex|dec|char|binary|octal|stkvar"]
+    struct: Annotated[str, "Struct type name (required for kind='stroff')"]
+    delta: Annotated[int, "Byte offset within struct (kind='stroff', default 0)"]
+    target_addr: Annotated[str, "Symbol the operand references (kind='offset')"]
+
+
+class MakeDataOp(TypedDict, total=False):
+    """Typed-data creation op: replace items at addr with a fresh typed symbol."""
+
+    addr: Annotated[str, "Address to (re)define as data (hex or decimal)"]
+    type: Annotated[str, "Full C declaration, e.g. 'MyStruct *g_ptr[4]'"]
+    name: Annotated[str, "Optional symbol name to apply"]
+    delete_existing: Annotated[bool, "Delete existing items first (default true)"]
+
+
 # ============================================================================
 # TypedDict Definitions for Results
 # ============================================================================
@@ -626,9 +652,18 @@ def parse_address(addr: str | int) -> int:
     try:
         return int(addr, 0)
     except ValueError:
+        # Try name-to-address resolution before failing
+        try:
+            import idaapi
+
+            ea = idaapi.get_name_ea(idaapi.BADADDR, addr.strip())
+            if ea != idaapi.BADADDR:
+                return ea
+        except ImportError:
+            pass
         for ch in addr:
             if ch not in "0123456789abcdefABCDEF":
-                raise IDAError(f"Failed to parse address: {addr}")
+                raise IDAError(f"Not found: {addr!r}")
         raise IDAError(f"Failed to parse address (missing 0x prefix): {addr}")
 
 
@@ -970,6 +1005,23 @@ class my_modifier_t(ida_hexrays.user_lvar_modifier_t):
         return False
 
 
+def hexrays_local_var_exists(func_ea: int, var_name: str) -> bool:
+    """Return True if a Hex-Rays local variable exists in the decompiled function."""
+    if not ida_hexrays.init_hexrays_plugin():
+        return False
+    try:
+        cfunc = ida_hexrays.decompile(func_ea)
+        if not cfunc:
+            return False
+        lvars = cfunc.get_lvars()
+        for i in range(lvars.size()):
+            if lvars[i].name == var_name:
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, list[str]]:
     if sys.platform == "win32":
         import ctypes
@@ -1062,17 +1114,17 @@ def decompile_checked(addr: int):
     return cfunc
 
 
-def decompile_function_safe(ea: int) -> Optional[str]:
-    """Safely decompile a function, returning None on failure (uses cache)"""
+def decompile_function_safe(ea: int) -> "tuple[str | None, str | None]":
+    """Safely decompile a function. Returns (code, error); exactly one is non-None.
+
+    Routes through decompile_checked so the returned error carries the actionable
+    Hex-Rays failure detail (hf.str + errea) instead of a bare None.
+    """
     import ida_lines
     import ida_kernwin
 
     try:
-        if not ida_hexrays.init_hexrays_plugin():
-            return None
-        cfunc = ida_hexrays.decompile(ea)
-        if not cfunc:
-            return None
+        cfunc = decompile_checked(ea)
         sv = cfunc.get_pseudocode()
         lines = []
         for sl in sv:
@@ -1093,9 +1145,11 @@ def decompile_function_safe(ea: int) -> Optional[str]:
                 lines.append(f"{text} /*{line_ea:#x}*/")
             else:
                 lines.append(text)
-        return "\n".join(lines)
-    except (RuntimeError, ValueError, AttributeError, IDAError):
-        return None
+        return "\n".join(lines), None
+    except IDAError as e:
+        return None, str(e)
+    except Exception as e:
+        return None, f"Decompilation failed at {hex(ea)}: {e}"
 
 
 def get_assembly_lines(ea: int) -> str:

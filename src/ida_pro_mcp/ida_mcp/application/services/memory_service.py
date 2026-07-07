@@ -72,7 +72,8 @@ class MemoryService:
 
             try:
                 ea = parse_address(addr)
-                data = " ".join(f"{x:#02x}" for x in self.adapter.get_bytes(ea, size))
+                raw = self.adapter.read_bytes_bss_safe(ea, size)
+                data = " ".join(f"{x:#02x}" for x in raw)
                 results.append({"addr": addr, "data": data})
             except Exception as e:
                 results.append({"addr": addr, "data": None, "error": str(e)})
@@ -92,8 +93,8 @@ class MemoryService:
                 bits, signed, byte_order, normalized = self._parse_int_class(ty)
                 ea = parse_address(addr)
                 size = bits // 8
-                data = self.adapter.get_bytes(ea, size)
-                if not data or len(data) != size:
+                data = self.adapter.read_bytes_bss_safe(ea, size)
+                if len(data) != size:
                     raise ValueError(f"Failed to read {size} bytes at {addr}")
 
                 value = int.from_bytes(data, byte_order, signed=signed)

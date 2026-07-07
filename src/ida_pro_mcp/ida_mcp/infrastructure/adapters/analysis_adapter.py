@@ -350,6 +350,11 @@ class AnalysisAdapter:
 
     # --- xref primitives ---
 
+    def is_mapped(self, ea: int) -> bool:
+        import ida_bytes
+
+        return ida_bytes.is_mapped(ea)
+
     def xrefs_to(self, ea: int) -> list:
         import idautils
 

@@ -106,7 +106,9 @@ class CompositeService:
 
             # Decompilation — capped at _DECOMPILE_LINE_CAP lines.
             try:
-                raw_code = decompile_function_safe(ea)
+                raw_code, raw_err = decompile_function_safe(ea)
+                if raw_code is None:
+                    raw_code = raw_err or ""
                 code, total_lines = self._cap_decompile(raw_code)
                 result["decompiled"] = code
                 if total_lines is not None:
@@ -292,7 +294,8 @@ class CompositeService:
             return {"error": f"No function at {hex(ea)}"}
 
         # --- Before ---
-        before = decompile_function_safe(ea)
+        before_code, before_err = decompile_function_safe(ea)
+        before = before_code if before_code is not None else before_err
 
         # --- Apply action ---
         applied: str
@@ -328,7 +331,8 @@ class CompositeService:
             return {"error": f"Action {action!r} failed: {exc}"}
 
         # --- After ---
-        after = decompile_function_safe(ea)
+        after_code, after_err = decompile_function_safe(ea)
+        after = after_code if after_code is not None else after_err
 
         return {
             "before": before,
