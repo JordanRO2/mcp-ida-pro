@@ -7,10 +7,42 @@ It loads the actual implementation from the ida_mcp package.
 import sys
 import idaapi
 import ida_kernwin
+import ida_netnode
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import ida_mcp
+
+
+# Per-database persistence of the configured MCP endpoint (netnode). All access
+# is best-effort: any failure (no open database, etc.) falls back to defaults so
+# the plugin never breaks. Distinct from the "$ ida_mcp.<key>" config blobs.
+_NETNODE_ENDPOINT = "$ ida_mcp.endpoint"
+_ALT_PORT = 0
+_SUP_HOST = 0
+
+
+def _persisted_endpoint() -> "tuple[str, int] | None":
+    """Return (host, port) saved in this database, or None if not set."""
+    try:
+        node = ida_netnode.netnode(_NETNODE_ENDPOINT)
+        port = node.altval(_ALT_PORT)  # 0 == not set
+        host = node.supstr(_SUP_HOST)
+        if port and host:
+            return host, int(port)
+    except Exception:
+        pass
+    return None
+
+
+def _persist_endpoint(host: str, port: int) -> None:
+    """Save (host, port) into this database's netnode. Best-effort."""
+    try:
+        node = ida_netnode.netnode(_NETNODE_ENDPOINT, 0, True)
+        node.altset(_ALT_PORT, port)
+        node.supset(_SUP_HOST, host)
+    except Exception:
+        pass
 
 
 def unload_package(package_name: str):
@@ -77,7 +109,9 @@ class MCPConfigHandler(idaapi.action_handler_t):
 
         self.plugin.host = host
         self.plugin.port = port
-        print(f"[MCP] Configuration updated: {host}:{port}")
+        # Persist per-database so the endpoint survives close/reopen.
+        _persist_endpoint(host, port)
+        print(f"[MCP] Configuration updated (saved to database): {host}:{port}")
 
         # Apply new endpoint immediately if the server is running.
         if self.plugin.mcp is not None:
@@ -132,8 +166,14 @@ class MCP(idaapi.plugin_t):
             f"(press {hotkey} to restart, or set IDA_MCP_NO_AUTOSTART to disable)"
         )
         self.mcp: "ida_mcp.rpc.McpServer | None" = None
-        self.host = self.DEFAULT_HOST
-        self.port = self.DEFAULT_PORT
+        # Prefer an endpoint persisted in this database (survives close/reopen),
+        # else fall back to the defaults.
+        saved = _persisted_endpoint()
+        if saved is not None:
+            self.host, self.port = saved
+        else:
+            self.host = self.DEFAULT_HOST
+            self.port = self.DEFAULT_PORT
 
         # Register a separate menu item for host/port configuration
         ida_kernwin.register_action(
