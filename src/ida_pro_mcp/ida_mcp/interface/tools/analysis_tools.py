@@ -26,10 +26,11 @@ from ...domain.value_objects import InsnPattern
 @tool_timeout(90.0)
 def decompile(
     addr: Annotated[str, "Function address or name to decompile"],
+    include_addresses: Annotated[bool, "Append /*0x...*/ address markers per line"] = True,
     timeout: Annotated[int | float | None, "Override timeout in seconds (default: 90)"] = None,
 ) -> dict:
     """Decompile function(s) at address(es); returns pseudocode and per-item errors."""
-    return get_analysis_service().decompile(addr, timeout)
+    return get_analysis_service().decompile(addr, include_addresses, timeout)
 
 
 @tool

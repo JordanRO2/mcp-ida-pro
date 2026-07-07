@@ -142,10 +142,10 @@ class AnalysisService:
     # decompile
     # ------------------------------------------------------------------
 
-    def decompile(self, addr: str, timeout=None) -> dict:
+    def decompile(self, addr: str, include_addresses: bool = True, timeout=None) -> dict:
         try:
             start = parse_address(addr)
-            code, err = decompile_function_safe(start)
+            code, err = decompile_function_safe(start, include_addresses)
             if code is None:
                 return {"addr": addr, "code": None, "error": err or "Decompilation failed"}
             return {"addr": addr, "code": code}

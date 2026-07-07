@@ -1114,11 +1114,15 @@ def decompile_checked(addr: int):
     return cfunc
 
 
-def decompile_function_safe(ea: int) -> "tuple[str | None, str | None]":
+def decompile_function_safe(
+    ea: int, include_addresses: bool = True
+) -> "tuple[str | None, str | None]":
     """Safely decompile a function. Returns (code, error); exactly one is non-None.
 
     Routes through decompile_checked so the returned error carries the actionable
-    Hex-Rays failure detail (hf.str + errea) instead of a bare None.
+    Hex-Rays failure detail (hf.str + errea) instead of a bare None. When
+    ``include_addresses`` is false the per-line ``/*0x...*/`` address markers are
+    omitted (cleaner output for diffing/reading).
     """
     import ida_lines
     import ida_kernwin
@@ -1141,7 +1145,7 @@ def decompile_function_safe(ea: int) -> "tuple[str | None, str | None]":
                         except ValueError:
                             pass
             text = ida_lines.tag_remove(sl.line)
-            if line_ea is not None:
+            if include_addresses and line_ea is not None:
                 lines.append(f"{text} /*{line_ea:#x}*/")
             else:
                 lines.append(text)
