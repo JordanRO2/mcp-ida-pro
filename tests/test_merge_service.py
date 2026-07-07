@@ -45,12 +45,12 @@ def test_subtract_baseline_drops_unedited_and_keeps_edits():
     # Copy A renamed it; copy B left it as the pristine name.
     a = _record(names=[{"ea": "0x1000", "name": "RENAMED_A", "kind": "func"}])
     b = _record(names=[{"ea": "0x1000", "name": ".init_proc", "kind": "func"}])
-    out = merge_service.subtract_baseline({"a": a, "b": b}, baseline)
+    out = ms.subtract_baseline({"a": a, "b": b}, baseline)
     # A's edit survives; B's unchanged name is dropped (== baseline).
     assert [n["name"] for n in out["a"]["names"]] == ["RENAMED_A"]
     assert out["b"]["names"] == []
     # And the reconciliation now sees a clean singleton (no false conflict).
-    plan, conflicts = merge_service.build_plan(out, policy="manual")
+    plan, conflicts = ms.build_plan(out, policy="manual")
     assert conflicts == []
     assert plan["names"]["0x1000"]["name"] == "RENAMED_A"
 
