@@ -200,12 +200,25 @@ class MCP(idaapi.plugin_t):
         except Exception:
             pass
 
+    def _deregister_discovery(self):
+        """Best-effort removal of this GUI instance's discovery registration."""
+        port = getattr(self, "_discovery_port", None)
+        if port is None:
+            return
+        try:
+            from ida_mcp.discovery import unregister_instance
+            unregister_instance(port)
+        except Exception:
+            pass
+        self._discovery_port = None
+
     def _start_server(self):
         """(Re)start the MCP HTTP server. Used by both auto-start and the hotkey."""
         if self.mcp:
             self.mcp.stop()
             self.mcp = None
             self._remove_connection_file()
+            self._deregister_discovery()
 
         # HACK: ensure fresh load of ida_mcp package
         unload_package("ida_mcp")
@@ -225,6 +238,7 @@ class MCP(idaapi.plugin_t):
                 write_connection_file,
                 remove_connection_file,
             )
+            from ida_mcp.discovery import register_instance
 
         try:
             init_caches()
@@ -254,6 +268,26 @@ class MCP(idaapi.plugin_t):
                     print(f"  Connection file: {path}")
                 except Exception as e:
                     print(f"[MCP] Failed to write connection file: {e}")
+                # Register this live GUI instance in the discovery registry so a
+                # unified idalib supervisor can ADOPT it (route tools to the DB
+                # you are looking at) alongside its headless workers, instead of
+                # this being a separate MCP endpoint.
+                try:
+                    import ida_nalt
+                    import ida_loader
+                    idb_path = ida_loader.get_path(ida_loader.PATH_TYPE_IDB) or ""
+                    binary = ida_nalt.get_root_filename() or (
+                        __import__("os").path.basename(idb_path)
+                    )
+                    register_instance(
+                        self.host, port, __import__("os").getpid(),
+                        binary, idb_path, backend="gui",
+                        session_id=f"gui-{binary}",
+                    )
+                    self._discovery_port = port
+                    print(f"  Registered GUI instance in discovery (:{port})")
+                except Exception as e:
+                    print(f"[MCP] discovery register failed (non-fatal): {e}")
                 return
             except OSError as e:
                 if e.errno in (48, 98, 10048):  # Address already in use
@@ -274,6 +308,7 @@ class MCP(idaapi.plugin_t):
         if hasattr(self, "_ui_hooks"):
             self._ui_hooks.unhook()
         ida_kernwin.unregister_action(CONFIG_ACTION_ID)
+        self._deregister_discovery()
         if self.mcp:
             self.mcp.stop()
             self.mcp = None
