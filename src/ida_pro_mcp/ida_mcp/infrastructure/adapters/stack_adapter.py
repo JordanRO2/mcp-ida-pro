@@ -41,7 +41,9 @@ class StackAdapter:
         return get_stack_frame_variables_internal(ea, arg)
 
     def get_udm(self, frame_tif, var_name: str):
-        return frame_tif.get_udm(var_name)
+        from ..compat import tinfo_get_udm
+
+        return tinfo_get_udm(frame_tif, var_name)
 
     def get_udm_tid(self, frame_tif, idx: int):
         return frame_tif.get_udm_tid(idx)

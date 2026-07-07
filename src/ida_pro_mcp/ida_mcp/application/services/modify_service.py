@@ -565,6 +565,8 @@ class ModifyService:
             return results, halted
 
         def _rename_stack(items) -> "tuple[list[dict], bool]":
+            from ...infrastructure.compat import tinfo_get_udm
+
             results: list[dict] = []
             halted = False
             for item in items:
@@ -616,7 +618,7 @@ class ModifyService:
                             break
                         continue
 
-                    idx, udm = frame_tif.get_udm(old_name)
+                    idx, udm = tinfo_get_udm(frame_tif, old_name)
                     if not udm:
                         result = {
                             "func_addr": func_addr,
@@ -666,7 +668,7 @@ class ModifyService:
                     success = True
                     error = None
                     if not dry_run:
-                        _, conflict_udm = frame_tif.get_udm(new_name)
+                        _, conflict_udm = tinfo_get_udm(frame_tif, new_name)
                         if conflict_udm and new_name != old_name:
                             success = False
                             error = f"Stack variable name {new_name!r} already exists"

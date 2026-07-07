@@ -249,3 +249,29 @@ def guess_tinfo(tif: ida_typeinf.tinfo_t, ea: int) -> bool:
             pass
 
     return False
+
+
+def tinfo_get_udm(
+    tif: "ida_typeinf.tinfo_t", name: str
+) -> "tuple[int, ida_typeinf.udm_t | None]":
+    """Get a UDM (struct/frame member) by name across IDA versions.
+
+    tinfo_t.get_udm() exists in IDA 8.5+ but is MISSING in early 9.0 builds
+    (e.g. build 240925, which this environment runs), where calling it raises
+    AttributeError. Fall back to the older find_udm() + get_udm_by_tid() APIs.
+
+    Returns (index, udm); udm is None if not found.
+    """
+    if hasattr(tif, "get_udm"):
+        return tif.get_udm(name)
+
+    idx = tif.find_udm(name)
+    if idx == -1:
+        return -1, None
+    udm = ida_typeinf.udm_t()
+    tid = tif.get_udm_tid(idx)
+    # get_udm_by_tid returns 0 on success (C convention); trust udm.name.
+    tif.get_udm_by_tid(udm, tid)
+    if udm.name:
+        return idx, udm
+    return -1, None
