@@ -8,7 +8,7 @@ from typing import TypeVar, cast
 from http.server import HTTPServer
 
 from ..sync.sync import idasync
-from ..connection import tokens_match
+from ..connection import tokens_match, read_stable_token
 from ...rpc import (
     McpRpcRegistry,
     McpHttpRequestHandler,
@@ -113,7 +113,7 @@ class IdaMcpHttpRequestHandler(McpHttpRequestHandler):
         a matching `Authorization: Bearer <token>` header; otherwise it is
         rejected with HTTP 401.
         """
-        if not _truthy(os.environ.get("IDA_MCP_REQUIRE_TOKEN")):
+        if not (_truthy(os.environ.get("IDA_MCP_REQUIRE_TOKEN")) or read_stable_token()):
             return True
         expected = getattr(self.mcp_server, "auth_token", None)
         if not expected:

@@ -173,6 +173,7 @@ class MCP(idaapi.plugin_t):
             from .ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
             from .ida_mcp.infrastructure.connection import (
                 generate_token,
+                read_stable_token,
                 write_connection_file,
                 remove_connection_file,
             )
@@ -180,6 +181,7 @@ class MCP(idaapi.plugin_t):
             from ida_mcp import MCP_SERVER, IdaMcpHttpRequestHandler, init_caches
             from ida_mcp.infrastructure.connection import (
                 generate_token,
+                read_stable_token,
                 write_connection_file,
                 remove_connection_file,
             )
@@ -192,7 +194,7 @@ class MCP(idaapi.plugin_t):
         # Generate a fresh session token for this server lifetime. It is always
         # written to the connection file and accepted if presented; it is only
         # *required* when IDA_MCP_REQUIRE_TOKEN is set (enforced in the handler).
-        token = generate_token()
+        token = read_stable_token() or generate_token()
         MCP_SERVER.auth_token = token
 
         # Discover an available port starting at the configured one. The first

@@ -33,6 +33,29 @@ def generate_token() -> str:
     return secrets.token_hex(32)
 
 
+def stable_token_path() -> str:
+    """Absolute path of the persistent stable-token file (opt-in fixed token)."""
+    return os.path.join(os.path.expanduser("~"), ".ida-pro-mcp", "token")
+
+
+def read_stable_token() -> str | None:
+    """Return the configured stable auth token, or None if not set/invalid.
+
+    When ``~/.ida-pro-mcp/token`` holds a valid 64-char lowercase-hex token the
+    plugin uses it as a fixed token (instead of a random per-run one) and the
+    HTTP handler *requires* it. Mirrors the Thunderbird stableAuthToken pref so
+    a static client config (Authorization: Bearer <token>) can connect directly.
+    """
+    try:
+        with open(stable_token_path(), "r", encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError:
+        return None
+    if len(token) == 64 and all(c in "0123456789abcdef" for c in token):
+        return token
+    return None
+
+
 def write_connection_file(port: int, token: str) -> str:
     """Write the connection file with the bound port, token and owning pid.
 
