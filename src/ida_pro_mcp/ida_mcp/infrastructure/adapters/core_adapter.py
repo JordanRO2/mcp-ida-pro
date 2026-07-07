@@ -14,6 +14,7 @@ import ida_auto
 import idaapi
 import ida_funcs
 import ida_hexrays
+import ida_kernwin  # is_idaq() GUI detection
 import idautils
 import ida_loader
 import ida_nalt
@@ -235,5 +236,29 @@ class CoreAdapter:
     def get_idb_path(self) -> str:
         return ida_loader.get_path(ida_loader.PATH_TYPE_IDB)
 
-    def save_database(self, save_path: str) -> bool:
-        return bool(ida_loader.save_database(save_path, 0))
+    def is_gui(self) -> bool:
+        """True under the IDA Qt GUI (idaq); False in headless idalib/text mode."""
+        try:
+            return bool(ida_kernwin.is_idaq())
+        except Exception:
+            return False
+
+    def save_database_native(self) -> bool:
+        """GUI in-place save (equivalent to Ctrl+W): save_database(None, 0).
+
+        Preserves the live loose working files; never packs/kills them.
+        """
+        return bool(ida_loader.save_database(None, 0))
+
+    def save_database_copy(self, save_path: str) -> bool:
+        """GUI save-as: compressed snapshot to a new path WITHOUT DBFL_KILL, so
+        the live .id0/.id1/.id2/.nam/.til of the open database stay intact.
+        """
+        return bool(ida_loader.save_database(save_path, ida_loader.DBFL_COMP))
+
+    def save_database_pack(self, save_path: str) -> bool:
+        """Headless idalib: pack into a single compressed .i64/.idb, removing the
+        loose working files.
+        """
+        flags = ida_loader.DBFL_KILL | ida_loader.DBFL_COMP
+        return bool(ida_loader.save_database(save_path, flags))

@@ -134,7 +134,14 @@ def imports_query(
 def idb_save(
     path: Annotated[str, "Optional destination path (default: current IDB path)"] = "",
 ) -> dict:
-    """Save active IDB to disk, optionally to a provided path."""
+    """Save active IDB to disk, optionally to a provided path.
+
+    In the GUI (idaq) the open database is backed by loose working files that IDA
+    actively manages; packing+killing them corrupts the DB on reopen (#446). GUI
+    mode therefore uses IDA's native in-place save (Ctrl+W), and an explicit
+    different destination writes a compressed copy WITHOUT killing the live files.
+    Only headless idalib packs into a single compressed .i64/.idb.
+    """
     return get_core_service().idb_save(path)
 
 

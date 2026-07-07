@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import io
+import os
 import sys
 
 from ...infrastructure.adapters.python_exec_adapter import PythonExecAdapter
@@ -112,6 +113,53 @@ class PythonExecService:
             return {
                 "result": "",
                 "stdout": "",
+                "stderr": traceback.format_exc(),
+            }
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+    def py_exec_file(self, file_path: str) -> dict:
+        if not os.path.isfile(file_path):
+            return {"result": "", "stdout": "", "stderr": f"File not found: {file_path}"}
+
+        stdout_capture = io.StringIO()
+        stderr_capture = io.StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+
+        try:
+            sys.stdout = stdout_capture
+            sys.stderr = stderr_capture
+
+            exec_globals = self.adapter.build_exec_globals()
+            exec_globals["__file__"] = file_path
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                code = f.read()
+
+            # Single shared globals dict (no locals split), so top-level
+            # definitions are visible to all code in the script.
+            exec(compile(code, file_path, "exec"), exec_globals)
+
+            stdout_text = stdout_capture.getvalue()
+            stderr_text = stderr_capture.getvalue()
+
+            result_value = ""
+            if exec_globals.get("result") is not None:
+                result_value = str(exec_globals["result"])
+
+            return {
+                "result": result_value,
+                "stdout": stdout_text,
+                "stderr": stderr_text,
+            }
+        except Exception:
+            import traceback
+
+            return {
+                "result": "",
+                "stdout": stdout_capture.getvalue(),
                 "stderr": traceback.format_exc(),
             }
         finally:

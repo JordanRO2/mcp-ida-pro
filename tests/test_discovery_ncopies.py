@@ -85,10 +85,21 @@ def test_find_instance_for_session_disambiguates(registry):
 
 
 def test_discovery_import_pulls_no_ida():
-    import sys
-    leaked = [
-        m for m in sys.modules
-        if (m in ("idc", "idaapi", "idapro") or m.startswith("ida_"))
-        and not m.startswith("ida_pro_mcp")  # our own package, not IDA
-    ]
-    assert leaked == []
+    # Run in a FRESH subprocess so sibling tests that stub idaapi in sys.modules
+    # cannot pollute the check. This asserts the real property: importing the
+    # discovery module (as the supervisor does) pulls in no IDA modules.
+    import subprocess
+    import sys as _sys
+    from pathlib import Path
+
+    repo_src = str(Path(__file__).resolve().parent.parent / "src")
+    code = (
+        "import sys, importlib.util, os;"
+        "p=os.path.join(r'%s','ida_pro_mcp','ida_mcp','discovery.py');"
+        "spec=importlib.util.spec_from_file_location('disc_probe',p);"
+        "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
+        "bad=[x for x in sys.modules if x in ('idc','idaapi','idapro') or x.startswith('ida_')];"
+        "print('LEAK' if bad else 'CLEAN')"
+    ) % repo_src
+    out = subprocess.run([_sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.stdout.strip() == "CLEAN", out.stdout + out.stderr

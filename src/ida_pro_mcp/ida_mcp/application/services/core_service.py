@@ -489,7 +489,21 @@ class CoreService:
             if not save_path:
                 return {"ok": False, "path": None, "error": "Could not resolve IDB path"}
 
-            ok = self.adapter.save_database(save_path)
+            if self.adapter.is_gui():
+                # GUI: the open DB is backed by loose working files IDA manages;
+                # DBFL_KILL-packing them out from under the running GUI corrupts
+                # the database on the next reopen (#446).
+                current = self.adapter.get_idb_path()
+                if path and save_path != current:
+                    # Save-as compressed snapshot; leaves live working files intact.
+                    ok = self.adapter.save_database_copy(save_path)
+                else:
+                    # Native in-place save (Ctrl+W).
+                    ok = self.adapter.save_database_native()
+            else:
+                # Headless idalib: safe to pack into a single compressed file.
+                ok = self.adapter.save_database_pack(save_path)
+
             return {
                 "ok": ok,
                 "path": save_path,
