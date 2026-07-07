@@ -154,3 +154,23 @@ def find_regex(
 ) -> dict:
     """Search strings by case-insensitive regex with offset/limit pagination."""
     return get_core_service().find_regex(pattern, limit, offset)
+
+
+@tool
+@idasync
+def search_text(
+    pattern: Annotated[str, "Text to search for in the rendered listing (literal substring by default)"],
+    limit: Annotated[int, "Max hits per page (default: 30, max: 500)"] = 30,
+    start: Annotated[str, "Lower bound (hex or symbol). Empty = first segment."] = "",
+    end: Annotated[str, "Upper bound (hex or symbol, exclusive). Empty = last segment."] = "",
+    regex: Annotated[bool, "Treat pattern as a Python regex"] = False,
+    case_sensitive: Annotated[bool, "Case-sensitive match (default: false)"] = False,
+    include: Annotated[str, "'disasm' | 'comments' | 'all' (default: all)"] = "all",
+    code_only: Annotated[bool, "Restrict search to executable segments (default: true)"] = True,
+) -> dict:
+    """Search the rendered listing (disassembly + comments) for `pattern` over
+    [start, end). Complements find/find_bytes/find_regex (which match strings
+    and bytes) by searching what IDA actually renders; cancellable and paged."""
+    return get_core_service().search_text(
+        pattern, limit, start, end, regex, case_sensitive, include, code_only
+    )

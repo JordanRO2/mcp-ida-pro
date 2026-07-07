@@ -142,3 +142,78 @@ def test_save_false_reports_error():
     a = FakeAdapter(gui=False, ok=False)
     r = CoreService(a).idb_save("")
     assert r["ok"] is False and r["error"] == "save_database returned false"
+
+
+# ---------------------------------------------------------------------------
+# CoreService.search_text (IDA-free; fake adapter + stubbed get_tool_deadline)
+# ---------------------------------------------------------------------------
+
+# search_text imports get_tool_deadline lazily from the sync module; stub it so
+# no IDA is pulled.
+_sync_pkg = types.ModuleType("ida_pro_mcp.ida_mcp.infrastructure.sync")
+_sync_pkg.__path__ = []
+sys.modules.setdefault("ida_pro_mcp.ida_mcp.infrastructure.sync", _sync_pkg)
+_sync_mod = types.ModuleType("ida_pro_mcp.ida_mcp.infrastructure.sync.sync")
+_sync_mod.get_tool_deadline = lambda: None
+sys.modules.setdefault("ida_pro_mcp.ida_mcp.infrastructure.sync.sync", _sync_mod)
+
+
+class FakeSearchAdapter:
+    """One executable segment [0x1000, 0x1020) with heads every 4 bytes; a head
+    'matches' when its text contains the needle."""
+
+    def __init__(self, cancel_after=None):
+        self._cancel_after = cancel_after
+        self._polls = 0
+
+    def exec_segments(self):
+        return [(0x1000, 0x1020)]
+
+    def all_segments(self):
+        return [(0x1000, 0x1020)]
+
+    def heads(self, start, end):
+        return range(start, end, 4)
+
+    def classify_hit_lines(self, ea, matcher, want_disasm, want_comments):
+        text = f"call sub_{ea:x}"
+        return [{"kind": "disasm", "text": text}] if matcher(text) else []
+
+    def hit_function_name(self, ea):
+        return None
+
+    def hit_segment_name(self, ea):
+        return ".text"
+
+    def get_item_size(self, ea):
+        return 4
+
+    def user_cancelled(self):
+        self._polls += 1
+        return self._cancel_after is not None and self._polls > self._cancel_after
+
+
+def test_search_text_finds_substring_hits():
+    r = CoreService(FakeSearchAdapter()).search_text("call")
+    assert r["n"] == 8  # 0x1000..0x101c step 4
+    assert r["hits"][0]["addr"] == "0x1000"
+    assert r["hits"][0]["segment"] == ".text"
+    assert r["cursor"] == {"done": True}
+
+
+def test_search_text_paginates_with_cursor():
+    r = CoreService(FakeSearchAdapter()).search_text("call", limit=3)
+    assert r["n"] == 3
+    assert r["cursor"]["next"] == hex(0x1008 + 4)  # after the 3rd head (0x1008)
+
+
+def test_search_text_regex_and_miss():
+    hit = CoreService(FakeSearchAdapter()).search_text(r"sub_1000$", regex=True)
+    assert hit["n"] == 1 and hit["hits"][0]["addr"] == "0x1000"
+    miss = CoreService(FakeSearchAdapter()).search_text("NOPE")
+    assert miss["n"] == 0 and miss["cursor"] == {"done": True}
+
+
+def test_search_text_invalid_include():
+    r = CoreService(FakeSearchAdapter()).search_text("call", include="bogus")
+    assert r["n"] == 0 and "invalid include" in r["error"]

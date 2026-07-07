@@ -15,11 +15,28 @@ import idaapi
 import ida_funcs
 import ida_hexrays
 import ida_kernwin  # is_idaq() GUI detection
+import ida_lines  # rendered-listing search (search_text)
+import ida_segment
 import idautils
 import ida_loader
 import ida_nalt
 import ida_typeinf
 import idc
+
+# Listing lines carrying any of these SCOLOR tags are comments (search_text).
+_COMMENT_SCOLORS = (
+    ida_lines.SCOLOR_REGCMT,
+    ida_lines.SCOLOR_RPTCMT,
+    ida_lines.SCOLOR_AUTOCMT,
+    ida_lines.SCOLOR_COLLAPSED,
+)
+
+
+def _line_is_comment(tagged: str) -> bool:
+    """A rendered listing line is a comment if it carries a comment SCOLOR tag."""
+    if not tagged:
+        return False
+    return any(ida_lines.COLOR_ON + sc in tagged for sc in _COMMENT_SCOLORS)
 
 from ..cache.strings_cache import (
     get_strings_cache,
@@ -262,3 +279,82 @@ class CoreAdapter:
         """
         flags = ida_loader.DBFL_KILL | ida_loader.DBFL_COMP
         return bool(ida_loader.save_database(save_path, flags))
+
+    # -- rendered-listing search (search_text) ---------------------------------
+
+    @staticmethod
+    def exec_segments() -> "list[tuple[int, int]]":
+        """[(start, end)] for executable segments, in address order."""
+        ranges: "list[tuple[int, int]]" = []
+        for seg_ea in idautils.Segments():
+            seg = idaapi.getseg(seg_ea)
+            if seg and (seg.perm & idaapi.SEGPERM_EXEC):
+                ranges.append((seg.start_ea, seg.end_ea))
+        return ranges
+
+    @staticmethod
+    def all_segments() -> "list[tuple[int, int]]":
+        ranges: "list[tuple[int, int]]" = []
+        for seg_ea in idautils.Segments():
+            seg = idaapi.getseg(seg_ea)
+            if seg:
+                ranges.append((seg.start_ea, seg.end_ea))
+        return ranges
+
+    @staticmethod
+    def heads(start: int, end: int):
+        """Yield head addresses in [start, end) (idautils.Heads)."""
+        return idautils.Heads(start, end)
+
+    @staticmethod
+    def get_item_size(ea: int) -> int:
+        return int(idaapi.get_item_size(ea))
+
+    @staticmethod
+    def user_cancelled() -> bool:
+        return bool(ida_kernwin.user_cancelled())
+
+    @staticmethod
+    def hit_function_name(ea: int) -> "str | None":
+        func = idaapi.get_func(ea)
+        if func is None:
+            return None
+        return ida_funcs.get_func_name(func.start_ea) or None
+
+    @staticmethod
+    def hit_segment_name(ea: int) -> "str | None":
+        seg = idaapi.getseg(ea)
+        if seg is None:
+            return None
+        return ida_segment.get_segm_name(seg) or None
+
+    @staticmethod
+    def classify_hit_lines(
+        ea: int, matcher, want_disasm: bool, want_comments: bool, max_lines: int = 32
+    ) -> "list[dict]":
+        """Render the listing for `ea`, classify each line, return matching lines."""
+        out: "list[dict]" = []
+        try:
+            result = ida_lines.generate_disassembly(ea, max_lines, False, False)
+        except Exception:
+            return out
+        # Bindings vary: (n, lineno, lines) or (lines, lineno).
+        lines = None
+        if isinstance(result, tuple):
+            for item in result:
+                if isinstance(item, (list, tuple)) and item and isinstance(item[0], str):
+                    lines = list(item)
+                    break
+        if lines is None:
+            return out
+        for tagged in lines:
+            text = ida_lines.tag_remove(tagged) or ""
+            if not text or not matcher(text):
+                continue
+            kind = "comment" if _line_is_comment(tagged) else "disasm"
+            if kind == "disasm" and not want_disasm:
+                continue
+            if kind == "comment" and not want_comments:
+                continue
+            out.append({"kind": kind, "text": text})
+        return out

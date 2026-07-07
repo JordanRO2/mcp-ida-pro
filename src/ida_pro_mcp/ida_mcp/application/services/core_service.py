@@ -512,6 +512,111 @@ class CoreService:
         except Exception as e:
             return {"ok": False, "path": path or None, "error": str(e)}
 
+    def search_text(
+        self,
+        pattern: str,
+        limit: int = 30,
+        start: str = "",
+        end: str = "",
+        regex: bool = False,
+        case_sensitive: bool = False,
+        include: str = "all",
+        code_only: bool = True,
+    ) -> dict:
+        """Search the rendered listing for `pattern` over [start, end).
+
+        Walks idautils.Heads() in Python, rendering each head; chunked so the
+        per-tool deadline and the UI Cancel button interrupt the scan reliably
+        (unlike the C-level ida_search.find_text it replaces).
+        """
+        from ...infrastructure.sync.sync import get_tool_deadline
+
+        if limit <= 0:
+            limit = 30
+        if limit > 500:
+            limit = 500
+
+        include = (include or "all").lower()
+        if include not in ("disasm", "comments", "all"):
+            return {"n": 0, "hits": [], "cursor": {"done": True}, "error": f"invalid include: {include!r}"}
+        want_disasm = include in ("disasm", "all")
+        want_comments = include in ("comments", "all")
+
+        if regex:
+            try:
+                rx = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
+            except re.error as e:
+                return {"n": 0, "hits": [], "cursor": {"done": True}, "error": f"invalid regex: {e}"}
+            matcher = lambda s: bool(rx.search(s))  # noqa: E731
+        elif case_sensitive:
+            matcher = lambda s: pattern in s  # noqa: E731
+        else:
+            needle = pattern.lower()
+            matcher = lambda s: needle in s.lower()  # noqa: E731
+
+        segments = self.adapter.exec_segments() if code_only else self.adapter.all_segments()
+        if not segments:
+            return {"n": 0, "hits": [], "cursor": {"done": True}}
+
+        try:
+            start_ea = parse_address(start) if start else segments[0][0]
+        except Exception as e:
+            return {"n": 0, "hits": [], "cursor": {"done": True}, "error": f"invalid start: {e}"}
+        try:
+            end_ea = parse_address(end) if end else segments[-1][1]
+        except Exception as e:
+            return {"n": 0, "hits": [], "cursor": {"done": True}, "error": f"invalid end: {e}"}
+        if end_ea <= start_ea:
+            return {"n": 0, "hits": [], "cursor": {"done": True}}
+
+        hits: list = []
+        next_cursor = None
+        cancelled = False
+        CHUNK_BYTES = 65536
+        deadline = get_tool_deadline()
+
+        for seg_start, seg_end in segments:
+            if cancelled or len(hits) >= limit:
+                break
+            if seg_end <= start_ea:
+                continue
+            if seg_start >= end_ea:
+                break
+            chunk_ea = max(seg_start, start_ea)
+            walk_end = min(seg_end, end_ea)
+            while chunk_ea < walk_end:
+                if cancelled or len(hits) >= limit:
+                    break
+                if (deadline is not None and time.monotonic() >= deadline) or self.adapter.user_cancelled():
+                    cancelled = True
+                    next_cursor = chunk_ea
+                    break
+                chunk_end = min(chunk_ea + CHUNK_BYTES, walk_end)
+                for head_ea in self.adapter.heads(chunk_ea, chunk_end):
+                    lines = self.adapter.classify_hit_lines(head_ea, matcher, want_disasm, want_comments)
+                    if not lines:
+                        continue
+                    entry = {"addr": hex(head_ea), "matches": lines}
+                    fname = self.adapter.hit_function_name(head_ea)
+                    if fname:
+                        entry["function"] = fname
+                    sname = self.adapter.hit_segment_name(head_ea)
+                    if sname:
+                        entry["segment"] = sname
+                    hits.append(entry)
+                    if len(hits) >= limit:
+                        next_cursor = head_ea + max(1, self.adapter.get_item_size(head_ea))
+                        break
+                chunk_ea = chunk_end
+
+        if cancelled:
+            cursor = {"next": hex(next_cursor), "cancelled": True}
+        elif next_cursor is not None:
+            cursor = {"next": hex(next_cursor)}
+        else:
+            cursor = {"done": True}
+        return {"n": len(hits), "hits": hits, "cursor": cursor}
+
     def find_regex(self, pattern: str, limit: int = 30, offset: int = 0) -> dict:
         if limit <= 0:
             limit = 30
