@@ -158,9 +158,14 @@ class IdaMcpHttpRequestHandler(McpHttpRequestHandler):
             if not self._check_auth_token():
                 return
 
-        # Handle output download requests
+        # Handle output download requests. Guard with the Host check so a
+        # DNS-rebinding page (evil.com -> 127.0.0.1) cannot exfiltrate cached
+        # tool output from this endpoint (the download branch would otherwise
+        # bypass every origin/host check).
         output_match = re.match(r"^/output/([a-f0-9-]+)\.(\w+)$", path)
         if output_match:
+            if not self._check_host():
+                return
             self._handle_output_download(output_match.group(1), output_match.group(2))
             return
 
