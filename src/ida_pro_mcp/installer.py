@@ -456,6 +456,35 @@ def is_ida_plugin_installed() -> bool:
     return os.path.lexists(os.path.join(_get_ida_user_dir(), "plugins", "ida_mcp.py"))
 
 
+SUPERVISOR_DEFAULT_PORT = 8745
+
+
+def supervisor_config_path() -> str:
+    return os.path.join(_get_ida_user_dir(), "mcp", "supervisor.json")
+
+
+def write_supervisor_config(port: int = SUPERVISOR_DEFAULT_PORT) -> str:
+    """Record how the GUI plugin should auto-launch the shared idalib supervisor.
+
+    Captures the Python that ran the install (which has the idapro/idalib deps
+    the spawned workers need) plus the source path, so the plugin can start one
+    shared supervisor the first time any IDA instance opens, and every later
+    instance just registers itself for adoption.
+    """
+    cfg = {
+        "python": get_python_executable(),
+        "src": SCRIPT_DIR.rsplit(os.sep + "ida_pro_mcp", 1)[0],  # the 'src' dir
+        "module": "ida_pro_mcp.idalib_supervisor",
+        "host": "127.0.0.1",
+        "port": port,
+    }
+    path = supervisor_config_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    return path
+
+
 def install_ida_plugin(
     *, uninstall: bool = False, quiet: bool = False, allow_ida_free: bool = False
 ):
@@ -504,6 +533,14 @@ def install_ida_plugin(
         installed_items.append(f"loader: {loader_destination}")
     if _install_link_or_copy(IDA_PLUGIN_PKG, pkg_destination):
         installed_items.append(f"package: {pkg_destination}")
+
+    # Record how the plugin should auto-launch the shared supervisor (captures
+    # the current Python + source path for the spawned headless workers).
+    try:
+        write_supervisor_config()
+        installed_items.append(f"supervisor config: {supervisor_config_path()}")
+    except Exception as e:
+        print(f"Warning: could not write supervisor config: {e}")
 
     if not quiet:
         if installed_items or removed_old_plugin:

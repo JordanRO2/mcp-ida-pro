@@ -200,6 +200,88 @@ class MCP(idaapi.plugin_t):
         except Exception:
             pass
 
+    def _maybe_launch_supervisor(self):
+        """Start ONE shared idalib supervisor if none is running yet.
+
+        The first IDA instance to open launches it; later instances see it
+        already listening and just rely on their discovery registration to be
+        adopted. Opt out with IDA_MCP_NO_SUPERVISOR. Best-effort: any failure
+        only means parallel mode must be started manually (idalib-mcp).
+        """
+        import os
+        import json
+        import socket
+        import subprocess
+
+        if os.environ.get("IDA_MCP_NO_SUPERVISOR"):
+            return
+
+        # Load the launch spec written at install time; fall back to env/derived.
+        cfg = {}
+        try:
+            appdata = os.environ.get("APPDATA") or os.path.join(
+                os.path.expanduser("~"), "AppData", "Roaming"
+            )
+            cfg_path = os.path.join(appdata, "Hex-Rays", "IDA Pro", "mcp", "supervisor.json")
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+
+        host = os.environ.get("IDA_MCP_SUPERVISOR_HOST", cfg.get("host", "127.0.0.1"))
+        port = int(os.environ.get("IDA_MCP_SUPERVISOR_PORT", cfg.get("port", 8745)))
+
+        # Already running (shared across IDA instances)? Then do nothing.
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                print(f"[MCP] Shared supervisor already running on {host}:{port}")
+                return
+        except OSError:
+            pass
+
+        python = os.environ.get("IDA_MCP_SUPERVISOR_PYTHON") or cfg.get("python")
+        if not python or not os.path.exists(python):
+            print(
+                "[MCP] No supervisor Python configured; parallel mode is manual "
+                "(run 'idalib-mcp'). Reinstall with 'ida-pro-mcp --install' to enable auto-start."
+            )
+            return
+
+        env = dict(os.environ)
+        # Workers spawned by the supervisor need idalib -> point IDADIR at this
+        # IDA install, and PYTHONPATH at the source (for a dev/symlink checkout).
+        try:
+            env["IDADIR"] = idaapi.idadir("")
+        except Exception:
+            pass
+        src = cfg.get("src")
+        if not src:
+            # Derive from this loader's real location (symlinked dev checkout).
+            real = os.path.realpath(__file__)
+            src = os.path.dirname(os.path.dirname(real))
+        if src and os.path.isdir(src):
+            env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = (
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+        try:
+            subprocess.Popen(
+                [python, "-m", cfg.get("module", "ida_pro_mcp.idalib_supervisor"),
+                 "--host", host, "--port", str(port)],
+                env=env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+                start_new_session=(os.name != "nt"),
+            )
+            print(f"[MCP] Launched shared idalib supervisor on {host}:{port} "
+                  f"(connect your MCP client here for parallel/multi-agent mode)")
+        except Exception as e:
+            print(f"[MCP] Could not launch supervisor (non-fatal): {e}")
+
     def _deregister_discovery(self):
         """Best-effort removal of this GUI instance's discovery registration."""
         port = getattr(self, "_discovery_port", None)
@@ -288,6 +370,10 @@ class MCP(idaapi.plugin_t):
                     print(f"  Registered GUI instance in discovery (:{port})")
                 except Exception as e:
                     print(f"[MCP] discovery register failed (non-fatal): {e}")
+                # Ensure a single SHARED idalib supervisor is running so this
+                # (and any other) open IDA is adoptable and parallel headless
+                # copies can be spawned — all through one MCP endpoint.
+                self._maybe_launch_supervisor()
                 return
             except OSError as e:
                 if e.errno in (48, 98, 10048):  # Address already in use
