@@ -148,40 +148,38 @@ uv run idalib-mcp --host 127.0.0.1 --port 8745 path/to/executable
 
 _Note_: The `idalib` feature was contributed by [Willi Ballenthin](https://github.com/williballenthin).
 
-## Headless idalib Session Model
+## Multi-process supervisor, N-copies parallelism & unified endpoint
 
-Use `--isolated-contexts` to enable strict per-transport isolation:
+`idalib-mcp` is a **multi-process supervisor**: one MCP endpoint that lets
+several agents analyze the **same binary in parallel** (one worker process per
+private copy) and that also **adopts your running IDA GUI**, so a single client
+connection reaches both. Opening IDA auto-starts it; it is headless, a shared
+singleton, and persistent.
 
 ```sh
-uv run idalib-mcp --isolated-contexts --host 127.0.0.1 --port 8745 path/to/executable
+# Usually you don't run this by hand — the GUI plugin auto-launches it on start.
+uv run idalib-mcp --host 127.0.0.1 --port 8745 [path/to/executable]
 ```
 
-### Why use `--isolated-contexts`?
+- **N-copies**: `idb_open(binary)` mints a fresh worker with its own **private
+  copy** of the binary, so opening it twice gives two workers/IDBs → real
+  parallelism on one binary. Every tool takes an **optional** `database=<session_id>`
+  routing arg (defaults to the sole open session, so tools/skills work
+  unchanged); `idb_merge` consolidates the copies' annotations into one `.i64`.
+- **GUI adoption**: `idb_open(binary, mode="prefer_gui")` routes to your live
+  IDA window (auth token forwarded).
+- **Automatic / single / headless / persistent**: the GUI plugin registers in a
+  discovery registry and starts the supervisor only if one isn't already
+  running (at most one, shared across IDA instances), with no console windows;
+  it stays up after IDA closes (stop it manually). Opt out with
+  `IDA_MCP_NO_SUPERVISOR=1`.
 
-Use it when multiple agents connect to the same `idalib-mcp` server and you want deterministic context isolation:
+Full design, tools, workflows and the commit-level changelog:
+[devdocs/MULTIPROCESS-SUPERVISOR.md](devdocs/MULTIPROCESS-SUPERVISOR.md).
 
-- Prevent one agent from changing another agent's active session accidentally.
-- Run concurrent analyses safely (for example agent A on binary X and agent B on binary Y).
-- Still allow intentional collaboration by binding multiple agents to the same open session ID.
-- Improve reproducibility because each agent's context binding is explicit.
-
-When `--isolated-contexts` is enabled:
-
-- Each transport context has its own binding (`Mcp-Session-Id` for `/mcp`, `session` for `/sse`, `stdio:default` for stdio).
-- Unbound contexts fail fast for IDB-dependent tools/resources.
-- `idalib_switch(session_id)` and `idalib_open(...)` bind the caller context only.
-
-### Streamable HTTP behavior
-
-With `--isolated-contexts`, strict Streamable HTTP session semantics are enabled, including `Mcp-Session-Id` validation.
-
-### Context tools
-
-- `idalib_open(input_path, ...)`: Open binary and bind it to the active context policy.
-- `idalib_switch(session_id)`: Rebind the active context policy to an existing session.
-- `idalib_current()`: Return the session bound to the active context policy.
-- `idalib_unbind()`: Remove the active context binding.
-- `idalib_list()`: Includes `is_active`, `is_current_context`, and `bound_contexts`.
+> The former `--isolated-contexts` model and the `idalib_open/switch/current/unbind`
+> context tools have been removed; the supervisor's N-copies + `database` routing
+> replaces them.
 
 
 ## MCP Resources
