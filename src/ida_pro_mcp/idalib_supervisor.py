@@ -1014,9 +1014,10 @@ class IdalibSupervisor:
         schema.setdefault("type", "object")
         props = schema.setdefault("properties", {})
         props.setdefault(_DATABASE_ARG, _DATABASE_ARG_SCHEMA)
-        required = schema.setdefault("required", [])
-        if _DATABASE_ARG not in required:
-            required.append(_DATABASE_ARG)
+        # `database` is OPTIONAL, not required: when exactly one session is open
+        # the router defaults to it, so single-instance tools/skills that never
+        # pass `database` work unchanged. It is only needed to disambiguate when
+        # multiple sessions (parallel copies) are open.
         return tool
 
     def worker_resources(self, method: str) -> list[dict]:
@@ -1301,10 +1302,18 @@ def _handle_tools_call(request_obj: dict[str, Any]) -> dict[str, Any] | None:
     arguments = copy.deepcopy(params.get("arguments") or {})
     database = arguments.pop(_DATABASE_ARG, None)
     if not isinstance(database, str) or not database:
-        return _jsonrpc_result(
-            request_id,
-            _call_tool_result({"error": _DATABASE_REQUIRED_ERROR}, is_error=True),
-        )
+        # Default to the sole open session so single-instance tools and skills
+        # that never pass `database` keep working; only require it to
+        # disambiguate when several parallel copies are open.
+        with sup._lock:
+            open_ids = list(sup.sessions.keys())
+        if len(open_ids) == 1:
+            database = open_ids[0]
+        else:
+            return _jsonrpc_result(
+                request_id,
+                _call_tool_result({"error": _DATABASE_REQUIRED_ERROR}, is_error=True),
+            )
     try:
         session = sup.resolve_session(database)
     except Exception as e:
