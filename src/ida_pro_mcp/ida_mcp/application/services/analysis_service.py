@@ -891,7 +891,10 @@ class AnalysisService:
     # ------------------------------------------------------------------
 
     def find_bytes(self, patterns, limit: int = 1000, offset: int = 0, timeout=None) -> list[dict]:
+        import time
         import idaapi
+        import ida_kernwin
+        from ...infrastructure.sync.sync import get_tool_deadline
 
         patterns = normalize_list_input(patterns)
 
@@ -899,11 +902,13 @@ class AnalysisService:
         if limit <= 0 or limit > 10000:
             limit = 10000
 
+        deadline = get_tool_deadline()
         results = []
         for pattern in patterns:
             matches = []
             skipped = 0
             more = False
+            cancelled = False
             try:
                 searcher, build_err = self.adapter.make_bytes_searcher(pattern)
                 if build_err is not None:
@@ -922,6 +927,9 @@ class AnalysisService:
                 ea = self.adapter.inf_get_min_ea()
                 max_ea = self.adapter.inf_get_max_ea()
                 while ea != idaapi.BADADDR:
+                    if (deadline is not None and time.monotonic() >= deadline) or ida_kernwin.user_cancelled():
+                        cancelled = True
+                        break
                     ea = searcher(ea, max_ea)
                     if ea == idaapi.BADADDR:
                         break
@@ -947,12 +955,18 @@ class AnalysisService:
                 )
                 continue
 
+            if cancelled:
+                cursor = {"next": offset + len(matches), "cancelled": True}
+            elif more:
+                cursor = {"next": offset + limit}
+            else:
+                cursor = {"done": True}
             results.append(
                 {
                     "pattern": pattern,
                     "matches": matches,
                     "n": len(matches),
-                    "cursor": {"next": offset + limit} if more else {"done": True},
+                    "cursor": cursor,
                 }
             )
         return results
