@@ -32,8 +32,10 @@ from typing import Annotated, Any, Optional, TypedDict
 # idapro must go first to initialize idalib
 import idapro
 
-from ida_pro_mcp.ida_mcp import MCP_SERVER, MCP_UNSAFE, IdaMcpHttpRequestHandler
+from ida_pro_mcp.ida_mcp import MCP_SERVER, MCP_UNSAFE, IdaMcpHttpRequestHandler, idasync
 from ida_pro_mcp.ida_mcp.application.profile import apply_profile, load_profile
+from ida_pro_mcp.ida_mcp.application.services.merge_service import MergeService
+from ida_pro_mcp.ida_mcp.container import get_core_adapter
 from ida_pro_mcp.ida_mcp.discovery import register_instance, unregister_instance
 from ida_pro_mcp.ida_mcp.interface.tools.core_tools import server_warmup
 from ida_pro_mcp.ida_mcp.rpc import set_download_base_url, tool
@@ -261,6 +263,40 @@ def idb_list() -> IdalibListResult:
         return {"sessions": sessions, "count": len(sessions)}
     except Exception as e:
         return {"error": f"Failed to list sessions: {e}"}
+
+
+@tool
+@idasync
+def export_annotations(
+    funcs: Annotated[
+        Optional[list[str]],
+        "Limit comment/prototype export to these function addresses (default: all)",
+    ] = None,
+    include_types: Annotated[bool, "Include prototypes/types"] = True,
+) -> dict:
+    """Export THIS database's user annotations (names/comments/prototypes),
+    EA-keyed, for N-copies merge-back."""
+    return MergeService().export_annotations(funcs=funcs, include_types=include_types)
+
+
+@tool
+@idasync
+def apply_annotations(
+    record: Annotated[dict, "A conflict-resolved annotation record to write here"],
+) -> dict:
+    """Apply an already-merged annotation record into THIS database."""
+    return MergeService().apply_annotations(record)
+
+
+@tool
+@idasync
+def idb_snapshot(
+    path: Annotated[str, "Destination path for a compressed .i64 snapshot"],
+) -> dict:
+    """Write a compressed snapshot of THIS database to `path` WITHOUT killing
+    the live working files (used to persist a merge result)."""
+    ok = get_core_adapter().save_database_copy(path)
+    return {"ok": bool(ok), "path": path}
 
 
 def _install_dispatch_hook() -> None:

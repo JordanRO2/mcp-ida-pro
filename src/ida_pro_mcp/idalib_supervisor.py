@@ -52,6 +52,7 @@ IDB_OPEN_MODES = {
 IDB_MANAGEMENT_TOOLS = {
     "idb_open",
     "idb_list",
+    "idb_merge",
 }
 WORKER_TCP_HEALTH_TIMEOUT_SEC = 0.5
 WORKER_RPC_HEALTH_TIMEOUT_SEC = 2.0
@@ -93,6 +94,30 @@ def _import_discovery():
 
 
 _discovery = _import_discovery()
+
+
+def _import_merge_service():
+    """Import merge_service's IDA-free reconciliation half without importing ida_mcp.
+
+    The supervisor only calls the pure functions (enumerate_sessions,
+    check_provenance, build_plan, plan_to_record); MergeService's IDA-side
+    extraction/apply runs inside worker processes, never here.
+    """
+    path = (
+        Path(__file__).resolve().parent
+        / "ida_mcp" / "application" / "services" / "merge_service.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "ida_pro_mcp_idalib_supervisor_merge", path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not import merge_service from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_merge = _import_merge_service()
 
 
 def _discovered_instance_backend(instance: dict[str, Any]) -> str:
@@ -1100,6 +1125,153 @@ def idb_list() -> IdalibListResult:
         return {"sessions": sessions, "count": len(sessions)}
     except Exception as e:
         return {"error": f"Failed to list sessions: {e}"}
+
+
+@mcp.tool
+def idb_merge(
+    path: Annotated[
+        str, "Binary path whose open copies to merge (all N sessions for this path)."
+    ] = "",
+    sources: Annotated[
+        "list[str] | None",
+        "Explicit session ids to merge (overrides path-based enumeration).",
+    ] = None,
+    into: Annotated[
+        str, "Destination .i64 for the merged database (default: <binary>.merged.i64)."
+    ] = "",
+    policy: Annotated[
+        str,
+        "Conflict resolution: 'manual' (refuse on conflict), 'first', 'last', or 'prefer'.",
+    ] = "manual",
+    prefer: Annotated[str, "Session id to win when policy='prefer'."] = "",
+    fields: Annotated[
+        "list[str] | None",
+        "Annotation classes to merge: names/comments/prototypes (default: all).",
+    ] = None,
+    dry_run: Annotated[
+        bool, "Preview the merge plan + conflicts without writing anything."
+    ] = False,
+    use_baseline: Annotated[
+        bool,
+        "Merge only annotations that differ from a pristine re-analysis, so "
+        "unedited auto-analysis/ELF names are not treated as edits (recommended).",
+    ] = True,
+) -> dict:
+    """Consolidate the divergent annotations of N parallel copies of one binary.
+
+    N-copies produces independent per-copy databases; this reads each copy's
+    user annotations (names/comments/prototypes), reconciles them under a
+    conflict policy, and — unless dry_run — writes the merged result to a single
+    canonical .i64. This is the "pass the parallel edits back to a main IDB" step.
+    """
+    sup = _require_supervisor()
+    ms = _merge  # IDA-free reconciliation module, loaded in isolation
+
+    try:
+        session_ids = ms.enumerate_sessions(
+            sup.path_to_session,
+            path=path,
+            sources=sources,
+            known=set(sup.sessions.keys()),
+        )
+        if not session_ids:
+            return {"error": "No open sessions match the given path/sources."}
+
+        # 1. Harvest annotations from each live worker (routed by session id).
+        records: dict[str, dict] = {}
+        unreachable: list[str] = []
+        for sid in session_ids:
+            try:
+                session = sup.resolve_session(sid)
+                records[sid] = sup.call_worker_tool(session, "export_annotations")
+            except Exception as e:  # noqa: BLE001
+                unreachable.append(f"{sid}: {e}")
+        if len(records) < 1:
+            return {"error": "No reachable sessions to merge.", "unreachable": unreachable}
+
+        # 2. Refuse to merge annotations across different binaries.
+        prov_err = ms.check_provenance(records)
+        if prov_err:
+            return {"error": prov_err}
+
+        # 2b. Subtract a pristine baseline (one fresh, unedited re-analysis) so
+        # auto-analysis / ELF symbol names shared by every copy are not mistaken
+        # for edits. Only real edits survive, so an unedited copy contributes
+        # nothing and a genuine same-address divergence is the only conflict.
+        baseline_info: dict[str, Any] = {}
+        if use_baseline:
+            src_path = path or records[session_ids[0]].get("provenance", {}).get(
+                "input_path", ""
+            )
+            base_sess = None
+            if src_path:
+                try:
+                    base_sess = sup.open_session(src_path)
+                    baseline_rec = sup.call_worker_tool(base_sess, "export_annotations")
+                    records = ms.subtract_baseline(records, baseline_rec)
+                    baseline_info = {"baseline_session": base_sess.session_id}
+                except Exception as e:  # noqa: BLE001
+                    baseline_info = {"baseline_error": str(e)}
+                finally:
+                    if base_sess is not None:
+                        try:
+                            sup._terminate_worker(base_sess)
+                            with sup._lock:
+                                sup._unregister_session_locked(base_sess.session_id)
+                        except Exception:  # noqa: BLE001
+                            pass
+
+        # 3. Reconcile into a plan + conflict report.
+        plan, conflicts = ms.build_plan(
+            records, fields=fields, policy=policy, prefer=prefer, order=session_ids
+        )
+        counts = {f: len(plan.get(f, {})) for f in ("names", "comments", "prototypes")}
+
+        if dry_run:
+            return {
+                "dry_run": True,
+                "sessions": session_ids,
+                "reachable": list(records),
+                "merged_counts": counts,
+                "conflicts": conflicts,
+                "unreachable": unreachable,
+                **baseline_info,
+            }
+        if conflicts and policy == "manual":
+            return {
+                "error": (
+                    f"{len(conflicts)} unresolved conflict(s); rerun with "
+                    "policy=first|last|prefer or resolve manually."
+                ),
+                "conflicts": conflicts,
+            }
+
+        merged = ms.plan_to_record(plan)
+
+        # 4. Apply the merged record to a target copy and snapshot it out.
+        target_sid = session_ids[0]
+        target = sup.resolve_session(target_sid)
+        applied = sup.call_worker_tool(target, "apply_annotations", {"record": merged})
+
+        dest = into.strip()
+        if not dest:
+            src_path = records[target_sid].get("provenance", {}).get("input_path", "") or path
+            dest = (src_path or target_sid) + ".merged.i64"
+        saved = sup.call_worker_tool(target, "idb_snapshot", {"path": dest})
+
+        return {
+            "ok": bool(saved.get("ok")),
+            "into": dest,
+            "sessions": session_ids,
+            "reachable": list(records),
+            "merged_counts": counts,
+            "conflicts": conflicts,
+            "applied": applied,
+            "unreachable": unreachable,
+            **baseline_info,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"merge failed: {e}"}
 
 
 @mcp.resource("ida://databases")
