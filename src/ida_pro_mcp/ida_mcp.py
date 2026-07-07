@@ -264,8 +264,9 @@ class MCP(idaapi.plugin_t):
 
         creationflags = 0
         if os.name == "nt":
+            # CREATE_NO_WINDOW: fully headless, no console window pops up.
             creationflags = (
-                getattr(subprocess, "DETACHED_PROCESS", 0)
+                getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
                 | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             )
         try:
@@ -277,7 +278,10 @@ class MCP(idaapi.plugin_t):
                 creationflags=creationflags,
                 start_new_session=(os.name != "nt"),
             )
-            print(f"[MCP] Launched shared idalib supervisor on {host}:{port} "
+            # The supervisor is a persistent, shared singleton: the "already
+            # listening" check above guarantees at most ONE, and it stays up
+            # (survives IDA closing) until stopped manually.
+            print(f"[MCP] Launched headless idalib supervisor on {host}:{port} "
                   f"(connect your MCP client here for parallel/multi-agent mode)")
         except Exception as e:
             print(f"[MCP] Could not launch supervisor (non-fatal): {e}")
@@ -365,6 +369,7 @@ class MCP(idaapi.plugin_t):
                         self.host, port, __import__("os").getpid(),
                         binary, idb_path, backend="gui",
                         session_id=f"gui-{binary}",
+                        token=token,
                     )
                     self._discovery_port = port
                     print(f"  Registered GUI instance in discovery (:{port})")

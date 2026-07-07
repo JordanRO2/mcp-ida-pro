@@ -178,6 +178,9 @@ class WorkerSession:
     owned: bool = True
     pid: int | None = None
     last_warmup: dict[str, Any] | None = None
+    # Bearer token to present when forwarding to this instance (an adopted GUI
+    # may enforce a stable auth token; spawned workers do not set one).
+    token: str | None = None
 
     def to_dict(self) -> IdalibSessionInfo:
         return {
@@ -259,7 +262,11 @@ class IdalibSupervisor:
         creationflags = 0
         start_new_session = False
         if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            # CREATE_NO_WINDOW keeps the headless worker fully windowless (no
+            # flashing console); NEW_PROCESS_GROUP detaches it from Ctrl-C.
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+                subprocess, "CREATE_NO_WINDOW", 0x08000000
+            )
         else:
             start_new_session = True
         process = subprocess.Popen(
@@ -417,16 +424,19 @@ class IdalibSupervisor:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if worker.token:
+            headers["Authorization"] = f"Bearer {worker.token}"
         conn = http.client.HTTPConnection(worker.host, worker.port, timeout=timeout)
         try:
             conn.request(
                 "POST",
                 self._worker_request_path(),
                 body,
-                {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                },
+                headers,
             )
             response = conn.getresponse()
             raw = response.read().decode("utf-8")
@@ -625,6 +635,7 @@ class IdalibSupervisor:
             backend="gui",
             owned=False,
             pid=int(instance["pid"]) if instance.get("pid") is not None else None,
+            token=instance.get("token") or None,
         )
 
     def _adopt_worker_instance(
@@ -1401,6 +1412,13 @@ def main() -> None:
         default=int(os.environ.get("IDA_MCP_MAX_WORKERS", "4")),
         help="Maximum simultaneous idalib worker databases (0 = unlimited, default: 4).",
     )
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=None,
+        help="Exit (and kill owned workers) when this PID dies, e.g. the IDA "
+        "instance that launched the supervisor — so closing IDA closes it.",
+    )
     parser.add_argument("input_path", type=Path, nargs="?", help="Optional binary to open on startup.")
     args = parser.parse_args()
 
@@ -1436,6 +1454,52 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, cleanup_and_exit)
     signal.signal(signal.SIGTERM, cleanup_and_exit)
+
+    if args.parent_pid:
+        import threading
+        import time as _time
+
+        def _parent_alive(pid: int) -> bool:
+            # Must detect actual EXIT, not just an openable handle: a process
+            # that exited while a handle is still held is a "zombie" that
+            # OpenProcess can still open. Check the exit code on Windows.
+            if os.name == "nt":
+                import ctypes
+
+                STILL_ACTIVE = 259
+                k = ctypes.windll.kernel32
+                h = k.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+                if not h:
+                    return False
+                code = ctypes.c_ulong()
+                ok = k.GetExitCodeProcess(h, ctypes.byref(code))
+                k.CloseHandle(h)
+                return bool(ok) and code.value == STILL_ACTIVE
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+
+        def _watch_parent(parent_pid: int) -> None:
+            while _parent_alive(parent_pid):
+                _time.sleep(3.0)
+            logger.info("Parent %d exited; shutting down supervisor + workers", parent_pid)
+            try:
+                with supervisor._lock:
+                    owned = [s for s in supervisor.sessions.values() if s.owned and s.process is not None]
+                    schema = supervisor._schema_worker
+                for s in owned:
+                    supervisor._terminate_worker(s)
+                if schema is not None:
+                    supervisor._terminate_worker(schema)
+            except Exception:
+                logger.debug("worker teardown on parent-exit failed", exc_info=True)
+            os._exit(0)
+
+        threading.Thread(
+            target=_watch_parent, args=(args.parent_pid,), daemon=True, name="parent-watchdog"
+        ).start()
 
     try:
         if args.stdio:

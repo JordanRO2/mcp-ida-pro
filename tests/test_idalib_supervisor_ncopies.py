@@ -165,3 +165,44 @@ def test_headless_does_not_adopt_worker_by_path(sample, monkeypatch):
     # spawned fresh workers, never adopted the pre-existing instance
     assert a.session_id != b.session_id
     assert sup.spawned == 2
+
+
+def test_worker_rpc_forwards_bearer_token_for_adopted_gui(monkeypatch):
+    """An adopted GUI may enforce a stable token; the supervisor must forward it."""
+    captured = {}
+
+    class _Resp:
+        status = 200
+        reason = "OK"
+
+        def read(self):
+            return b'{"jsonrpc":"2.0","id":1,"result":{}}'
+
+    class _Conn:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def request(self, method, path, body, headers):
+            captured["headers"] = headers
+
+        def getresponse(self):
+            return _Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(supmod.http.client, "HTTPConnection", _Conn)
+    sup = supmod.IdalibSupervisor(supmod.McpServer("t"))
+
+    with_token = supmod.WorkerSession(
+        session_id="gui", input_path="", filename="",
+        host="127.0.0.1", port=1, backend="gui", token="abc123",
+    )
+    sup._worker_rpc(with_token, {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert captured["headers"].get("Authorization") == "Bearer abc123"
+
+    no_token = supmod.WorkerSession(
+        session_id="w", input_path="", filename="", host="127.0.0.1", port=1,
+    )
+    sup._worker_rpc(no_token, {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert "Authorization" not in captured["headers"]

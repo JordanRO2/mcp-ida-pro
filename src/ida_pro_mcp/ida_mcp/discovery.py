@@ -45,6 +45,7 @@ class InstanceInfo(TypedDict, total=False):
     binary: str
     idb_path: str
     session_id: str  # N-copies: disambiguates duplicate workers of one path
+    token: str  # bearer token a supervisor must present when forwarding here
     started_at: str
     backend: str  # "gui" or "worker"
 
@@ -80,11 +81,14 @@ def register_instance(
     idb_path: str,
     backend: str = "gui",
     session_id: str | None = None,
+    token: str | None = None,
 ) -> str:
     """Write an instance registration file. Returns the file path.
 
     `session_id` (N-copies) tags which logical worker session owns this
-    instance so duplicate workers of one binary can be told apart.
+    instance so duplicate workers of one binary can be told apart. `token` is
+    the bearer token a supervisor must present when forwarding to this instance
+    (a GUI plugin may enforce a stable auth token).
     """
     info: InstanceInfo = {
         "host": host,
@@ -97,6 +101,8 @@ def register_instance(
     }
     if session_id is not None:
         info["session_id"] = session_id
+    if token is not None:
+        info["token"] = token
     instances_dir = get_instances_dir()
     os.makedirs(instances_dir, exist_ok=True)
     file_path = _instance_file_path(port)
